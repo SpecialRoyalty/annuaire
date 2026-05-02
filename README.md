@@ -133,3 +133,23 @@ Telegram impose des limites :
 - Recherche texte par nom de groupe
 - Modération anti-spam
 - Blacklist permanente par group_chat_id
+
+## Mode démo commercial
+
+Cette version contient un mode démo activable sans modifier le code.
+
+Dans Telegram :
+
+1. Lance le bot avec ton compte super admin.
+2. Clique sur `🛠 Modération`.
+3. Clique sur `🎭 Mode démo ON/OFF`.
+
+Quand le mode démo est actif :
+
+- le menu affiche `🎭 Voir la démo utilisateur` ;
+- le menu affiche `📊 Voir la démo listeur` ;
+- les catégories, groupes, notes, membres et stats sont fictifs ;
+- les prospects peuvent comprendre ce que verront les utilisateurs et ce que verra un propriétaire de groupe ;
+- tu peux le désactiver depuis le même bouton pour revenir au mode réel.
+
+Le mode démo est stocké dans la base de données, table `app_settings`, clé `demo_mode`.
