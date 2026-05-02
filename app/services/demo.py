@@ -58,12 +58,12 @@ DEMO_OWNER_PROJECT = DemoProject(
 def demo_categories():
     return DEMO_CATEGORIES
 
-def demo_projects_by_category(category_id: int, page: int, per_page: int = 5):
+def demo_projects_by_category(category_id: int, page: int, per_page: int = 3):
     items = [p for p in DEMO_PROJECTS if p.category_id == category_id]
     start = (page - 1) * per_page
     return items[start:start + per_page], len(items) > start + per_page
 
-def demo_top_projects(page: int, per_page: int = 5):
+def demo_top_projects(page: int, per_page: int = 3):
     items = sorted(DEMO_PROJECTS, key=lambda p: (p.rating_avg, p.start_count, p.click_count), reverse=True)
     start = (page - 1) * per_page
     return items[start:start + per_page], len(items) > start + per_page

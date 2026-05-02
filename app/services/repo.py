@@ -66,13 +66,13 @@ async def create_project(session: AsyncSession, owner: User, title: str, descrip
 async def get_project(session: AsyncSession, project_id: int):
     return await session.get(Project, project_id)
 
-async def active_projects_by_category(session: AsyncSession, category_id: int, page: int, per_page: int = 5):
+async def active_projects_by_category(session: AsyncSession, category_id: int, page: int, per_page: int = 3):
     offset = (page - 1) * per_page
     stmt = select(Project).where(Project.category_id == category_id, Project.status == ProjectStatus.ACTIVE.value).order_by(Project.rating_avg.desc(), Project.start_count.desc(), Project.click_count.desc(), Project.created_at.desc()).offset(offset).limit(per_page + 1)
     items = (await session.execute(stmt)).scalars().all()
     return items[:per_page], len(items) > per_page
 
-async def top_projects(session: AsyncSession, page: int, per_page: int = 5):
+async def top_projects(session: AsyncSession, page: int, per_page: int = 3):
     offset = (page - 1) * per_page
     stmt = select(Project).where(Project.status == ProjectStatus.ACTIVE.value).order_by(Project.rating_avg.desc(), Project.start_count.desc(), Project.click_count.desc()).offset(offset).limit(per_page + 1)
     items = (await session.execute(stmt)).scalars().all()
