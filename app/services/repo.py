@@ -144,3 +144,22 @@ async def stale_needs_bot(session: AsyncSession):
 async def inactive_too_long(session: AsyncSession):
     limit = datetime.now(timezone.utc) - timedelta(days=10)
     return (await session.execute(select(Project).where(Project.status == ProjectStatus.ACTIVE.value, Project.is_link_active == False, Project.inactive_since <= limit))).scalars().all()
+
+from app.db.models import AppSetting
+
+async def get_setting(session: AsyncSession, key: str, default: str = "") -> str:
+    item = await session.get(AppSetting, key)
+    return item.value if item else default
+
+async def set_setting(session: AsyncSession, key: str, value: str):
+    item = await session.get(AppSetting, key)
+    if not item:
+        item = AppSetting(key=key, value=value)
+        session.add(item)
+    else:
+        item.value = value
+    await session.commit()
+    return item
+
+async def is_demo_mode(session: AsyncSession) -> bool:
+    return (await get_setting(session, "demo_mode", "false")).lower() == "true"
