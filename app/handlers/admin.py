@@ -154,3 +154,19 @@ async def sa_cat_suggestions(call: CallbackQuery):
     text += "Aucune suggestion." if not suggestions else "\n".join([f"• {s.name}" for s in suggestions])
     await call.message.edit_text(text, reply_markup=super_admin_menu())
     await call.answer()
+
+@router.callback_query(F.data == "sa:demo")
+async def sa_demo(call: CallbackQuery):
+    async with SessionLocal() as session:
+        if not await is_sa(session, call.from_user):
+            await call.answer("Accès refusé.", show_alert=True)
+            return
+        active = await repo.is_demo_mode(session)
+        await repo.set_setting(session, "demo_mode", "false" if active else "true")
+        new_state = not active
+    await call.message.edit_text(
+        f"🎭 Mode démo {'activé' if new_state else 'désactivé'}.\n\n"
+        + ("Le menu affichera maintenant les parcours démo utilisateur et listeur." if new_state else "Le bot revient au mode réel avec la vraie base."),
+        reply_markup=super_admin_menu(),
+    )
+    await call.answer()

@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.db.session import SessionLocal
 from app.db.models import Project, ProjectStatus
 from app.keyboards import main_menu, categories_keyboard, rating_keyboard, back_home, cancel_keyboard
-from app.services import repo
+from app.services import repo, demo
 
 router = Router()
 settings = get_settings()
@@ -38,13 +38,15 @@ async def show_home(target, user):
         u = await repo.get_or_create_user(session, target.from_user if hasattr(target, 'from_user') else user, settings.super_admin_ids)
         has_projects = await repo.user_has_projects(session, u)
         total = await repo.total_users(session)
+        demo_mode = await repo.is_demo_mode(session)
     social = f"\n\n🔥 Déjà {total:,} utilisateurs ont lancé le bot.".replace(',', ' ') if total >= 1000 else ""
+    demo_banner = "\n\n🎭 Mode démo actif : explore les deux côtés du bot." if demo_mode else ""
     text = (
         "🔗 <b>Tous Les Liens</b>\n\n"
         "Retrouve les liens des groupes Telegram préférés.\n"
-        "Listing et service 100% gratuits." + social
+        "Listing et service 100% gratuits." + social + demo_banner
     )
-    markup = main_menu(u, has_projects)
+    markup = main_menu(u, has_projects, demo_mode=demo_mode)
     if isinstance(target, Message):
         await target.answer(text, reply_markup=markup)
     else:
@@ -90,7 +92,10 @@ async def info(call: CallbackQuery):
 @router.callback_query(F.data == "browse:categories")
 async def categories(call: CallbackQuery):
     async with SessionLocal() as session:
-        cats = await repo.list_categories(session)
+        if await repo.is_demo_mode(session):
+            cats = demo.demo_categories()
+        else:
+            cats = await repo.list_categories(session)
     await call.message.edit_text("📂 Choisis une catégorie :", reply_markup=categories_keyboard(cats))
     await call.answer()
 
@@ -117,8 +122,13 @@ async def browse_category(call: CallbackQuery):
     _, _, cat_id, page = call.data.split(":")
     cat_id, page = int(cat_id), int(page)
     async with SessionLocal() as session:
-        cat = await repo.get_category(session, cat_id)
-        projects, has_next = await repo.active_projects_by_category(session, cat_id, page)
+        if await repo.is_demo_mode(session):
+            cats = demo.demo_categories()
+            cat = next((c for c in cats if c.id == cat_id), None)
+            projects, has_next = demo.demo_projects_by_category(cat_id, page)
+        else:
+            cat = await repo.get_category(session, cat_id)
+            projects, has_next = await repo.active_projects_by_category(session, cat_id, page)
     rows = []
     if page > 1:
         rows.append(InlineKeyboardButton(text="⬅️ Précédent", callback_data=f"browse:cat:{cat_id}:{page-1}"))
@@ -143,7 +153,10 @@ async def browse_category(call: CallbackQuery):
 async def top(call: CallbackQuery):
     page = int(call.data.split(":")[-1])
     async with SessionLocal() as session:
-        projects, has_next = await repo.top_projects(session, page)
+        if await repo.is_demo_mode(session):
+            projects, has_next = demo.demo_top_projects(page)
+        else:
+            projects, has_next = await repo.top_projects(session, page)
     text = f"⭐ <b>Top groupes</b> — page {page}\n\n"
     kb_rows = []
     if not projects:
@@ -168,12 +181,19 @@ async def click_project(call: CallbackQuery):
     project_id = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
-        project = await repo.get_project(session, project_id)
-        if not project or project.status != ProjectStatus.ACTIVE.value or not project.is_link_active:
-            await call.answer("Lien indisponible pour le moment.", show_alert=True)
-            return
-        await repo.add_click(session, project, user)
-        link = project.invite_link
+        if await repo.is_demo_mode(session):
+            project = demo.get_demo_project(project_id)
+            if not project:
+                await call.answer("Démo indisponible.", show_alert=True)
+                return
+            link = project.invite_link
+        else:
+            project = await repo.get_project(session, project_id)
+            if not project or project.status != ProjectStatus.ACTIVE.value or not project.is_link_active:
+                await call.answer("Lien indisponible pour le moment.", show_alert=True)
+                return
+            await repo.add_click(session, project, user)
+            link = project.invite_link
     await call.answer("Lien ouvert ✅", show_alert=False)
     await call.message.edit_text(f"🚀 <b>Lien du groupe</b>\n\n{link}\n\nPense à noter le groupe après l’avoir visité.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ Noter ce groupe", callback_data=f"rate:menu:{project_id}")],
@@ -191,11 +211,15 @@ async def rate_set(call: CallbackQuery):
     _, _, project_id, value = call.data.split(":")
     async with SessionLocal() as session:
         user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
-        project = await repo.get_project(session, int(project_id))
-        if not project:
-            await call.answer("Projet introuvable.", show_alert=True)
-            return
-        ok = await repo.set_rating(session, user, project, int(value))
+        if await repo.is_demo_mode(session):
+            project = demo.get_demo_project(int(project_id))
+            ok = project is not None
+        else:
+            project = await repo.get_project(session, int(project_id))
+            if not project:
+                await call.answer("Projet introuvable.", show_alert=True)
+                return
+            ok = await repo.set_rating(session, user, project, int(value))
     if not ok:
         await call.answer("Tu ne peux pas noter ton propre groupe.", show_alert=True)
     else:
@@ -207,7 +231,57 @@ async def report(call: CallbackQuery):
     project_id = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
-        project = await repo.get_project(session, project_id)
-        if project:
-            await repo.report_project(session, user, project)
+        if await repo.is_demo_mode(session):
+            project = demo.get_demo_project(project_id)
+        else:
+            project = await repo.get_project(session, project_id)
+            if project:
+                await repo.report_project(session, user, project)
     await call.answer("Signalement envoyé aux modérateurs.", show_alert=True)
+
+
+@router.callback_query(F.data == "demo:user")
+async def demo_user(call: CallbackQuery):
+    text = (
+        "🎭 <b>Démo côté utilisateur</b>\n\n"
+        "Voici ce que verront les membres : ils choisissent une catégorie, comparent les groupes, voient les notes, les membres et entrent en un clic.\n\n"
+        "Objectif commercial : plus ton groupe est bien noté et actif, plus il monte dans le classement."
+    )
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📂 Voir les catégories démo", callback_data="browse:categories")],
+        [InlineKeyboardButton(text="⭐ Voir le top démo", callback_data="browse:top:1")],
+        [InlineKeyboardButton(text="📊 Démo côté listeur", callback_data="demo:owner")],
+        [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+    ]))
+    await call.answer()
+
+@router.callback_query(F.data == "demo:owner")
+async def demo_owner(call: CallbackQuery):
+    p = demo.DEMO_OWNER_PROJECT
+    text = (
+        f"📊 <b>Démo côté listeur — {p.title}</b>\n\n"
+        "Voilà ce que verra un propriétaire qui liste son groupe gratuitement :\n\n"
+        f"🔗 Clics vers le groupe : {p.click_count}\n"
+        f"🚀 Utilisateurs envoyés au bot : {p.start_count}\n"
+        f"⭐ Note : {p.rating_avg:.1f}/5 ({p.rating_count} avis)\n"
+        f"👥 Membres : {p.member_count}\n"
+        f"📅 Listé depuis : 12 jours\n"
+        "🟢 Lien actif\n\n"
+        "Le propriétaire peut modifier son lien si le groupe saute, suivre ses stats et garder un point de secours pour ses membres."
+    )
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Simuler modification du lien", callback_data="demo:editlink")],
+        [InlineKeyboardButton(text="🗑 Simuler suppression du projet", callback_data="demo:delete")],
+        [InlineKeyboardButton(text="🚀 Lister mon groupe gratuitement", callback_data="project:add")],
+        [InlineKeyboardButton(text="🎭 Démo utilisateur", callback_data="demo:user")],
+        [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+    ]))
+    await call.answer()
+
+@router.callback_query(F.data == "demo:editlink")
+async def demo_editlink(call: CallbackQuery):
+    await call.answer("Démo : dans le vrai mode, le propriétaire envoie simplement son nouveau lien Telegram.", show_alert=True)
+
+@router.callback_query(F.data == "demo:delete")
+async def demo_delete(call: CallbackQuery):
+    await call.answer("Démo : dans le vrai mode, le propriétaire peut retirer son groupe du listing.", show_alert=True)
