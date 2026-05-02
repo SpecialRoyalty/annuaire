@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.db.models import UserRole
-from app.keyboards import categories_keyboard, owner_project_keyboard, back_home
+from app.keyboards import categories_keyboard, owner_project_keyboard, back_home, cancel_keyboard
 from app.services import repo
 
 router = Router()
@@ -26,7 +26,7 @@ class EditLink(StatesGroup):
 @router.callback_query(F.data == "project:add")
 async def add_project(call: CallbackQuery, state: FSMContext):
     await state.set_state(AddProject.title)
-    await call.message.edit_text("➕ Nom du groupe/projet ?", reply_markup=back_home())
+    await call.message.edit_text("➕ <b>Listing gratuit</b>\n\nNom du groupe ?", reply_markup=cancel_keyboard())
     await call.answer()
 
 
@@ -34,7 +34,7 @@ async def add_project(call: CallbackQuery, state: FSMContext):
 async def add_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text[:120])
     await state.set_state(AddProject.description)
-    await message.answer("Description courte du groupe ?")
+    await message.answer("Description courte du groupe ?\n\nExplique en 1 phrase pourquoi les gens doivent rejoindre.", reply_markup=cancel_keyboard())
 
 
 @router.message(AddProject.description)
@@ -43,15 +43,15 @@ async def add_description(message: Message, state: FSMContext):
     async with SessionLocal() as session:
         cats = await repo.list_categories(session)
     await state.set_state(AddProject.category)
-    await message.answer("Choisis une catégorie :", reply_markup=categories_keyboard(cats))
+    await message.answer("Choisis une catégorie :", reply_markup=categories_keyboard(cats, for_listing=True))
 
 
-@router.callback_query(AddProject.category, F.data.startswith("browse:cat:"))
+@router.callback_query(AddProject.category, F.data.startswith("project:cat:"))
 async def add_category(call: CallbackQuery, state: FSMContext):
     cat_id = int(call.data.split(":")[2])
     await state.update_data(category_id=cat_id)
     await state.set_state(AddProject.invite_link)
-    await call.message.edit_text("Envoie le lien d’invitation du groupe.")
+    await call.message.edit_text("Envoie le lien d’invitation du groupe.\n\nExemple : https://t.me/ton_groupe", reply_markup=cancel_keyboard())
     await call.answer()
 
 
@@ -59,7 +59,7 @@ async def add_category(call: CallbackQuery, state: FSMContext):
 async def add_link(message: Message, state: FSMContext):
     link = (message.text or "").strip()
     if not (link.startswith("https://t.me/") or link.startswith("http://t.me/")):
-        await message.answer("Envoie un vrai lien Telegram qui commence par https://t.me/")
+        await message.answer("Envoie un vrai lien Telegram qui commence par https://t.me/", reply_markup=cancel_keyboard())
         return
     data = await state.get_data()
     async with SessionLocal() as session:
@@ -67,7 +67,7 @@ async def add_link(message: Message, state: FSMContext):
         project = await repo.create_project(session, user, data["title"], data["description"], data["category_id"], link)
     await state.clear()
     await message.answer(
-        "✅ Projet créé.\n\n"
+        "✅ Groupe créé gratuitement.\n\n"
         "Maintenant ajoute le bot comme admin dans ton groupe avec le droit d’épingler les messages.\n"
         "Ensuite envoie /connect dans le groupe.\n\n"
         "Tu as 1 heure avant rappel automatique.",
@@ -130,7 +130,7 @@ async def edit_link(call: CallbackQuery, state: FSMContext):
     project_id = int(call.data.split(":")[-1])
     await state.update_data(project_id=project_id)
     await state.set_state(EditLink.waiting_link)
-    await call.message.edit_text("Envoie le nouveau lien Telegram.")
+    await call.message.edit_text("Envoie le nouveau lien Telegram.", reply_markup=cancel_keyboard())
     await call.answer()
 
 
