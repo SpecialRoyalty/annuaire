@@ -22,18 +22,72 @@ def status_icon(project: Project) -> str:
     return "🟢" if project.is_link_active else "🔴"
 
 
-def project_text(project: Project) -> str:
+def short_project_line(project: Project) -> str:
+    members = f"{project.member_count:,}".replace(",", " ") if project.member_count else "N/A"
     return (
         f"{status_icon(project)} <b>{project.title}</b>\n"
-        f"{project.description or ''}\n\n"
-        f"⭐ {project.rating_avg:.1f}/5 ({project.rating_count} avis)\n"
-        f"👥 {project.member_count or 'N/A'} membres\n"
-        f"🔥 Popularité : {project.click_count + project.start_count}\n"
+        f"⭐ {project.rating_avg:.1f}/5 — 👥 {members} membres\n"
     )
 
+
+def project_detail_text(project: Project, category_name: str | None = None) -> str:
+    members = f"{project.member_count:,}".replace(",", " ") if project.member_count else "N/A"
+    popularity = f"{project.click_count + project.start_count:,}".replace(",", " ")
+    category = f"\n📂 Catégorie : {category_name}" if category_name else ""
+    link_status = "🟢 Lien actif" if project.is_link_active else "🔴 Lien inactif"
+    return (
+        f"{status_icon(project)} <b>{project.title}</b>\n\n"
+        f"{project.description or 'Aucune description.'}\n\n"
+        f"⭐ Note : {project.rating_avg:.1f}/5 — {project.rating_count} avis\n"
+        f"👥 Membres : {members}\n"
+        f"🔥 Popularité : {popularity}{category}\n"
+        f"{link_status}\n\n"
+        "Choisis une action :"
+    )
+
+
+def category_list_keyboard(projects, cat_id: int, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    rows = []
+    for p in projects:
+        rows.append([InlineKeyboardButton(text=f"📌 {p.title[:45]}", callback_data=f"project:detail:{p.id}:cat:{cat_id}:{page}")])
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="⬅️ Précédent", callback_data=f"browse:cat:{cat_id}:{page-1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="➡️ Suivant", callback_data=f"browse:cat:{cat_id}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="💡 Suggérer une catégorie", callback_data="cat:suggest")])
+    rows.append([InlineKeyboardButton(text="🏠 Menu", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def top_list_keyboard(projects, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    rows = []
+    for p in projects:
+        rows.append([InlineKeyboardButton(text=f"📌 {p.title[:45]}", callback_data=f"project:detail:{p.id}:top:0:{page}")])
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="⬅️ Précédent", callback_data=f"browse:top:{page-1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="➡️ Suivant", callback_data=f"browse:top:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🏠 Menu", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def project_detail_keyboard(project_id: int, origin: str, cat_id: int, page: int) -> InlineKeyboardMarkup:
+    back_cb = f"browse:cat:{cat_id}:{page}" if origin == "cat" else f"browse:top:{page}"
+    back_text = "⬅️ Retour à la catégorie" if origin == "cat" else "⬅️ Retour au top"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Entrer dans le groupe", callback_data=f"click:{project_id}:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="⭐ Noter", callback_data=f"rate:menu:{project_id}:{origin}:{cat_id}:{page}"), InlineKeyboardButton(text="⚠️ Signaler", callback_data=f"report:menu:{project_id}:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text=back_text, callback_data=back_cb)],
+        [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+    ])
+
 async def show_home(target, user):
-    async with SessionLocal() as session:
-        db_user = await repo.get_or_create_user(session, user if not hasattr(user, 'telegram_id') else target.from_user, settings.super_admin_ids) if False else None
     async with SessionLocal() as session:
         u = await repo.get_or_create_user(session, target.from_user if hasattr(target, 'from_user') else user, settings.super_admin_ids)
         has_projects = await repo.user_has_projects(session, u)
@@ -55,12 +109,11 @@ async def show_home(target, user):
 @router.message(CommandStart())
 async def start(message: Message):
     async with SessionLocal() as session:
-        user = await repo.get_or_create_user(session, message.from_user, settings.super_admin_ids)
+        await repo.get_or_create_user(session, message.from_user, settings.super_admin_ids)
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) == 2 and parts[1].startswith("group_"):
             try:
-                project_id = int(parts[1].replace("group_", ""))
-                await repo.add_start(session, project_id)
+                await repo.add_start(session, int(parts[1].replace("group_", "")))
             except ValueError:
                 pass
     await show_home(message, message.from_user)
@@ -92,10 +145,7 @@ async def info(call: CallbackQuery):
 @router.callback_query(F.data == "browse:categories")
 async def categories(call: CallbackQuery):
     async with SessionLocal() as session:
-        if await repo.is_demo_mode(session):
-            cats = demo.demo_categories()
-        else:
-            cats = await repo.list_categories(session)
+        cats = demo.demo_categories() if await repo.is_demo_mode(session) else await repo.list_categories(session)
     await call.message.edit_text("📂 Choisis une catégorie :", reply_markup=categories_keyboard(cats))
     await call.answer()
 
@@ -129,56 +179,57 @@ async def browse_category(call: CallbackQuery):
         else:
             cat = await repo.get_category(session, cat_id)
             projects, has_next = await repo.active_projects_by_category(session, cat_id, page)
-    rows = []
-    if page > 1:
-        rows.append(InlineKeyboardButton(text="⬅️ Précédent", callback_data=f"browse:cat:{cat_id}:{page-1}"))
-    if has_next:
-        rows.append(InlineKeyboardButton(text="➡️ Suivant", callback_data=f"browse:cat:{cat_id}:{page+1}"))
-    kb_rows = []
     text = f"📂 <b>{cat.name if cat else 'Catégorie'}</b> — page {page}\n\n"
     if not projects:
         text += "Aucun groupe actif ici pour l’instant.\n\nTu ne trouves pas ton groupe ? Demande au propriétaire de le lister gratuitement ici : @touslesliens_bot"
-    for p in projects:
-        text += project_text(p) + "\n"
-        kb_rows.append([InlineKeyboardButton(text=f"🚀 Entrer : {p.title[:25]}", callback_data=f"click:{p.id}")])
-        kb_rows.append([InlineKeyboardButton(text=f"⭐ Noter", callback_data=f"rate:menu:{p.id}"), InlineKeyboardButton(text="⚠️ Signaler", callback_data=f"report:{p.id}")])
-    if rows:
-        kb_rows.append(rows)
-    kb_rows.append([InlineKeyboardButton(text="💡 Suggérer une catégorie", callback_data="cat:suggest")])
-    kb_rows.append([InlineKeyboardButton(text="🏠 Menu", callback_data="home")])
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    else:
+        text += "Clique sur un groupe pour voir les détails, entrer, noter ou signaler.\n\n"
+        for p in projects:
+            text += short_project_line(p) + "\n"
+    await call.message.edit_text(text, reply_markup=category_list_keyboard(projects, cat_id, page, has_next))
     await call.answer()
 
 @router.callback_query(F.data.startswith("browse:top:"))
 async def top(call: CallbackQuery):
     page = int(call.data.split(":")[-1])
     async with SessionLocal() as session:
-        if await repo.is_demo_mode(session):
-            projects, has_next = demo.demo_top_projects(page)
-        else:
-            projects, has_next = await repo.top_projects(session, page)
+        projects, has_next = demo.demo_top_projects(page) if await repo.is_demo_mode(session) else await repo.top_projects(session, page)
     text = f"⭐ <b>Top groupes</b> — page {page}\n\n"
-    kb_rows = []
     if not projects:
         text += "Aucun groupe actif pour l’instant."
-    for p in projects:
-        text += project_text(p) + "\n"
-        kb_rows.append([InlineKeyboardButton(text=f"🚀 Entrer : {p.title[:25]}", callback_data=f"click:{p.id}")])
-        kb_rows.append([InlineKeyboardButton(text="⭐ Noter", callback_data=f"rate:menu:{p.id}"), InlineKeyboardButton(text="⚠️ Signaler", callback_data=f"report:{p.id}")])
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"browse:top:{page-1}"))
-    if has_next:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"browse:top:{page+1}"))
-    if nav:
-        kb_rows.append(nav)
-    kb_rows.append([InlineKeyboardButton(text="🏠 Menu", callback_data="home")])
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    else:
+        text += "Les groupes les mieux notés et les plus actifs montent ici.\n\n"
+        for p in projects:
+            text += short_project_line(p) + "\n"
+    await call.message.edit_text(text, reply_markup=top_list_keyboard(projects, page, has_next))
+    await call.answer()
+
+@router.callback_query(F.data.startswith("project:detail:"))
+async def project_detail(call: CallbackQuery):
+    # project:detail:{id}:{origin}:{cat_id}:{page}
+    _, _, project_id, origin, cat_id, page = call.data.split(":")
+    project_id, cat_id, page = int(project_id), int(cat_id), int(page)
+    async with SessionLocal() as session:
+        if await repo.is_demo_mode(session):
+            project = demo.get_demo_project(project_id)
+            category_name = next((c.name for c in demo.demo_categories() if project and c.id == project.category_id), None)
+        else:
+            project = await repo.get_project(session, project_id)
+            category = await repo.get_category(session, project.category_id) if project else None
+            category_name = category.name if category else None
+    if not project:
+        await call.answer("Groupe introuvable.", show_alert=True)
+        return
+    await call.message.edit_text(project_detail_text(project, category_name), reply_markup=project_detail_keyboard(project_id, origin, cat_id, page))
     await call.answer()
 
 @router.callback_query(F.data.startswith("click:"))
 async def click_project(call: CallbackQuery):
-    project_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    project_id = int(parts[1])
+    origin = parts[2] if len(parts) > 2 else "top"
+    cat_id = int(parts[3]) if len(parts) > 3 else 0
+    page = int(parts[4]) if len(parts) > 4 else 1
     async with SessionLocal() as session:
         user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
         if await repo.is_demo_mode(session):
@@ -196,55 +247,83 @@ async def click_project(call: CallbackQuery):
             link = project.invite_link
     await call.answer("Lien ouvert ✅", show_alert=False)
     await call.message.edit_text(f"🚀 <b>Lien du groupe</b>\n\n{link}\n\nPense à noter le groupe après l’avoir visité.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Noter ce groupe", callback_data=f"rate:menu:{project_id}")],
+        [InlineKeyboardButton(text="⭐ Noter ce groupe", callback_data=f"rate:menu:{project_id}:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="⬅️ Retour aux détails", callback_data=f"project:detail:{project_id}:{origin}:{cat_id}:{page}")],
         [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
     ]))
 
 @router.callback_query(F.data.startswith("rate:menu:"))
 async def rate_menu(call: CallbackQuery):
-    project_id = int(call.data.split(":")[-1])
-    await call.message.edit_text("Choisis une note :", reply_markup=rating_keyboard(project_id))
+    parts = call.data.split(":")
+    project_id = int(parts[2])
+    origin = parts[3] if len(parts) > 3 else "top"
+    cat_id = int(parts[4]) if len(parts) > 4 else 0
+    page = int(parts[5]) if len(parts) > 5 else 1
+    await call.message.edit_text("Choisis une note :", reply_markup=rating_keyboard(project_id, origin, cat_id, page))
     await call.answer()
 
 @router.callback_query(F.data.startswith("rate:set:"))
 async def rate_set(call: CallbackQuery):
-    _, _, project_id, value = call.data.split(":")
-    async with SessionLocal() as session:
-        user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
-        if await repo.is_demo_mode(session):
-            project = demo.get_demo_project(int(project_id))
-            ok = project is not None
-        else:
-            project = await repo.get_project(session, int(project_id))
-            if not project:
-                await call.answer("Projet introuvable.", show_alert=True)
-                return
-            ok = await repo.set_rating(session, user, project, int(value))
-    if not ok:
-        await call.answer("Tu ne peux pas noter ton propre groupe.", show_alert=True)
-    else:
-        await call.message.edit_text("✅ Merci pour ta note. Ton avis aide les meilleurs groupes à monter.", reply_markup=back_home())
-        await call.answer()
-
-@router.callback_query(F.data.startswith("report:"))
-async def report(call: CallbackQuery):
-    project_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    project_id, value = int(parts[2]), int(parts[3])
+    origin = parts[4] if len(parts) > 4 else "top"
+    cat_id = int(parts[5]) if len(parts) > 5 else 0
+    page = int(parts[6]) if len(parts) > 6 else 1
     async with SessionLocal() as session:
         user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
         if await repo.is_demo_mode(session):
             project = demo.get_demo_project(project_id)
+            ok = project is not None
         else:
             project = await repo.get_project(session, project_id)
-            if project:
-                await repo.report_project(session, user, project)
-    await call.answer("Signalement envoyé aux modérateurs.", show_alert=True)
+            if not project:
+                await call.answer("Projet introuvable.", show_alert=True)
+                return
+            ok = await repo.set_rating(session, user, project, value)
+    if not ok:
+        await call.answer("Tu ne peux pas noter ton propre groupe.", show_alert=True)
+    else:
+        await call.message.edit_text("✅ Merci pour ta note. Ton avis aide les meilleurs groupes à monter.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Retour aux détails", callback_data=f"project:detail:{project_id}:{origin}:{cat_id}:{page}")],
+            [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+        ]))
+        await call.answer()
 
+@router.callback_query(F.data.startswith("report:menu:"))
+async def report_menu(call: CallbackQuery):
+    # report:menu:{id}:{origin}:{cat_id}:{page}
+    _, _, project_id, origin, cat_id, page = call.data.split(":")
+    await call.message.edit_text("⚠️ <b>Signaler ce groupe</b>\n\nPourquoi veux-tu le signaler ?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔴 Lien mort", callback_data=f"report:set:{project_id}:Lien mort:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="⚠️ Scam / arnaque", callback_data=f"report:set:{project_id}:Scam:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="🚫 Contenu interdit", callback_data=f"report:set:{project_id}:Contenu interdit:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="⬅️ Retour aux détails", callback_data=f"project:detail:{project_id}:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+    ]))
+    await call.answer()
+
+@router.callback_query(F.data.startswith("report:set:"))
+async def report_set(call: CallbackQuery):
+    # report:set:{id}:{reason}:{origin}:{cat_id}:{page}
+    _, _, project_id, reason, origin, cat_id, page = call.data.split(":")
+    project_id, cat_id, page = int(project_id), int(cat_id), int(page)
+    async with SessionLocal() as session:
+        user = await repo.get_or_create_user(session, call.from_user, settings.super_admin_ids)
+        if not await repo.is_demo_mode(session):
+            project = await repo.get_project(session, project_id)
+            if project:
+                await repo.report_project(session, user, project, reason)
+    await call.message.edit_text(f"✅ Signalement envoyé aux modérateurs.\n\nMotif : {reason}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Retour aux détails", callback_data=f"project:detail:{project_id}:{origin}:{cat_id}:{page}")],
+        [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
+    ]))
+    await call.answer()
 
 @router.callback_query(F.data == "demo:user")
 async def demo_user(call: CallbackQuery):
     text = (
         "🎭 <b>Démo côté utilisateur</b>\n\n"
-        "Voici ce que verront les membres : ils choisissent une catégorie, comparent les groupes, voient les notes, les membres et entrent en un clic.\n\n"
+        "Voici ce que verront les membres : ils choisissent une catégorie, cliquent sur un groupe, voient une fiche propre, puis peuvent entrer, noter ou signaler.\n\n"
         "Objectif commercial : plus ton groupe est bien noté et actif, plus il monte dans le classement."
     )
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
