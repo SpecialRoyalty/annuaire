@@ -38,10 +38,10 @@ def categories_keyboard(categories, for_listing: bool = False) -> InlineKeyboard
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def rating_keyboard(project_id: int) -> InlineKeyboardMarkup:
+def rating_keyboard(project_id: int, origin: str = "top", cat_id: int = 0, page: int = 1) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{i}⭐", callback_data=f"rate:set:{project_id}:{i}") for i in range(1, 6)],
-        [InlineKeyboardButton(text="❌ Annuler", callback_data=f"browse:top:1")],
+        [InlineKeyboardButton(text=f"{i}⭐", callback_data=f"rate:set:{project_id}:{i}:{origin}:{cat_id}:{page}") for i in range(1, 6)],
+        [InlineKeyboardButton(text="⬅️ Retour", callback_data=f"project:detail:{project_id}:{origin}:{cat_id}:{page}")],
         [InlineKeyboardButton(text="🏠 Menu", callback_data="home")],
     ])
 
