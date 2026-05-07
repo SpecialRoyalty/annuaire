@@ -4,7 +4,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.config import settings
 from app.db.init_db import init_db
 from app.services.jobs import setup_jobs
-from app.handlers import start, info, browse, listing, suggestions, owner, admin, group_events, moderation_auto, daily_vote, demo
+from app.handlers import start, info, browse, listing, suggestions, owner, admin, group_events, moderation_auto, daily_vote, demo, dbcheck
 
 async def main():
     if not settings.BOT_TOKEN:
@@ -17,6 +17,7 @@ async def main():
 
     dp.include_router(start.router)
     dp.include_router(info.router)
+    dp.include_router(dbcheck.router)
     dp.include_router(demo.router)
     dp.include_router(browse.router)
     dp.include_router(listing.router)
