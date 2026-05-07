@@ -1,6 +1,6 @@
 from sqlalchemy import select
-from app.config import settings
 from app.models.models import User
+from app.config import settings
 
 async def get_or_create_user(session, tg_user):
     user = await session.scalar(select(User).where(User.telegram_id == tg_user.id))

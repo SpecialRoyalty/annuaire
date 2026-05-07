@@ -1,28 +1,31 @@
-from sqlalchemy import select
+from datetime import datetime
 from app.models.models import AppSetting
 
 async def get_setting(session, key: str, default: str = "") -> str:
-    row = await session.get(AppSetting, key)
-    return row.value if row else default
+    s = await session.get(AppSetting, key)
+    return s.value if s else default
 
 async def set_setting(session, key: str, value: str):
-    row = await session.get(AppSetting, key)
-    if row:
-        row.value = value
+    s = await session.get(AppSetting, key)
+    if s:
+        s.value = value
+        s.updated_at = datetime.utcnow()
     else:
-        session.add(AppSetting(key=key, value=value))
+        s = AppSetting(key=key, value=value)
+        session.add(s)
     await session.commit()
 
 async def is_demo(session) -> bool:
     return (await get_setting(session, "demo_mode", "false")) == "true"
 
 async def increment_starts(session) -> int:
-    row = await session.get(AppSetting, "total_starts")
-    if not row:
-        row = AppSetting(key="total_starts", value="0")
-        session.add(row)
-    total = int(row.value) + 1
-    row.value = str(total)
+    s = await session.get(AppSetting, "total_starts")
+    if not s:
+        s = AppSetting(key="total_starts", value="0")
+        session.add(s)
+    total = int(s.value) + 1
+    s.value = str(total)
+    s.updated_at = datetime.utcnow()
     await session.commit()
     return total
 
