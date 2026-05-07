@@ -1,139 +1,154 @@
-from math import ceil
 from sqlalchemy import select, desc
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from app.db.session import SessionLocal
 from app.config import settings
 from app.models.models import Category, Project, Click, Report, Rating
-from app.services.user_service import get_or_create_user
 from app.services.settings_service import is_demo
+from app.services.user_service import get_or_create_user
 from app.services.demo_data import DEMO_CATEGORIES, DEMO_PROJECTS
 from app.keyboards.common import kb
 
 router = Router()
 
-def rating_text(p):
-    if isinstance(p, dict):
-        return f"{p['rating']:.1f}/5 — {p['reviews']} avis"
-    return f"{(p.rating_sum / p.rating_count if p.rating_count else 0):.1f}/5 — {p.rating_count} avis"
-
-@router.callback_query(F.data.startswith("cats:"))
-async def categories(call: CallbackQuery):
-    page = int(call.data.split(":")[1])
+@router.callback_query(F.data == "cats")
+async def cats(call: CallbackQuery):
     async with SessionLocal() as session:
         demo = await is_demo(session)
         if demo:
-            cats = DEMO_CATEGORIES
-            rows = [[(f"📂 {c['name']}", f"cat:{c['id']}:0")] for c in cats]
+            rows = [[(c["name"], f"cat:{c['id']}:0") ] for c in DEMO_CATEGORIES]
         else:
             cats = list((await session.scalars(select(Category).order_by(Category.position, Category.name))).all())
-            rows = [[(f"📂 {c.name}", f"cat:{c.id}:0")] for c in cats]
-        rows.append([("💡 Suggérer une catégorie", "suggest_cat:start")])
-        rows.append([("🏠 Menu", "home")])
-        await call.message.edit_text("📂 Choisis une catégorie :", reply_markup=kb(rows))
-        await call.answer()
+            rows = [[(c.name, f"cat:{c.id}:0")] for c in cats]
+    rows.append([("Suggérer une catégorie", "suggest_cat:start")])
+    rows.append([("Menu", "home")])
+    await call.message.edit_text("Choisis une catégorie :", reply_markup=kb(rows))
+    await call.answer()
 
-@router.callback_query(F.data.startswith("cat:"))
-async def category_projects(call: CallbackQuery):
-    _, cat_id, page = call.data.split(":")
-    cat_id, page = int(cat_id), int(page)
+async def render_category(call, cid: int, page: int, skip_warning: bool = False):
     async with SessionLocal() as session:
         demo = await is_demo(session)
         if demo:
-            cat = next((c for c in DEMO_CATEGORIES if c["id"] == cat_id), None)
-            projects = [p for p in DEMO_PROJECTS if p["category_id"] == cat_id]
-            cat_name = cat["name"] if cat else "Catégorie"
+            cat = next((c for c in DEMO_CATEGORIES if c["id"] == cid), None)
+            if not cat:
+                await call.answer("Catégorie introuvable", show_alert=True); return
+            if cat.get("warning_enabled") and cat.get("warning_text") and not skip_warning:
+                await call.message.edit_text(cat["warning_text"], reply_markup=kb([
+                    [("Continuer", f"catgo:{cid}:{page}")],
+                    [("Retour", "cats")]
+                ]))
+                return
+            projects = [p for p in DEMO_PROJECTS if p["category_id"] == cid]
+            cat_name = cat["name"]
         else:
-            cat = await session.get(Category, cat_id)
-            cat_name = cat.name if cat else "Catégorie"
+            cat = await session.get(Category, cid)
+            if not cat:
+                await call.answer("Catégorie introuvable", show_alert=True); return
+            if cat.warning_enabled and cat.warning_text and not skip_warning:
+                await call.message.edit_text(cat.warning_text, reply_markup=kb([
+                    [("Continuer", f"catgo:{cid}:{page}")],
+                    [("Retour", "cats")]
+                ]))
+                return
             projects = list((await session.scalars(
-                select(Project).where(Project.category_id == cat_id, Project.status == "active")
-                .order_by(desc(Project.rating_sum), desc(Project.click_count))
+                select(Project).where(Project.category_id == cid, Project.status == "active").order_by(desc(Project.rating_sum), desc(Project.click_count))
             )).all())
+            cat_name = cat.name
 
-        size = settings.PAGE_SIZE
-        chunk = projects[page*size:(page+1)*size]
-        if not chunk:
-            text = f"📂 {cat_name}\n\nAucun groupe listé ici pour le moment.\n\nTu ne trouves pas ton groupe ? Demande au propriétaire de le lister ici : @{settings.BOT_USERNAME}"
-            rows = [[("💡 Suggérer une catégorie", "suggest_cat:start")], [("⬅️ Catégories", "cats:0")], [("🏠 Menu", "home")]]
+    size = settings.PAGE_SIZE
+    chunk = projects[page*size:(page+1)*size]
+    text = f"{cat_name} — page {page+1}\n\n"
+    rows = []
+    if not chunk:
+        text += f"Aucun groupe ici pour le moment.\n\nTu ne trouves pas ton groupe ? Demande au propriétaire de le lister ici : @{settings.BOT_USERNAME}"
+    for p in chunk:
+        if isinstance(p, dict):
+            text += f"🟢 {p['title']}\n⭐ {p['rating']:.1f}/5 — 👥 {p['members']:,} membres\n\n".replace(",", " ")
+            rows.append([(p["title"], f"project:{p['id']}:{cid}:{page}")])
         else:
-            text = f"📂 {cat_name} — page {page+1}\n\n"
-            rows = []
-            for p in chunk:
-                if isinstance(p, dict):
-                    text += f"🟢 {p['title']}\n⭐ {p['rating']:.1f}/5 — 👥 {p['members']:,} membres\n\n".replace(",", " ")
-                    rows.append([(f"📌 {p['title']}", f"project:{p['id']}:cat:{cat_id}:{page}")])
-                else:
-                    avg = p.rating_sum / p.rating_count if p.rating_count else 0
-                    status = "🟢" if p.is_link_active else "🔴"
-                    text += f"{status} {p.title}\n⭐ {avg:.1f}/5 — 👥 {p.member_count:,} membres\n\n".replace(",", " ")
-                    rows.append([(f"📌 {p.title}", f"project:{p.id}:cat:{cat_id}:{page}")])
-            nav = []
-            if page > 0:
-                nav.append(("⬅️ Précédent", f"cat:{cat_id}:{page-1}"))
-            if (page + 1) * size < len(projects):
-                nav.append(("➡️ Suivant", f"cat:{cat_id}:{page+1}"))
-            if nav:
-                rows.append(nav)
-            rows += [[("💡 Suggérer une catégorie", "suggest_cat:start")], [("⬅️ Catégories", "cats:0")], [("🏠 Menu", "home")]]
-        await call.message.edit_text(text, reply_markup=kb(rows))
-        await call.answer()
+            avg = p.rating_sum / p.rating_count if p.rating_count else 0
+            status = "🟢" if p.is_link_active else "🔴"
+            text += f"{status} {p.title}\n⭐ {avg:.1f}/5 — 👥 {p.member_count:,} membres\n\n".replace(",", " ")
+            rows.append([(p.title, f"project:{p.id}:{cid}:{page}")])
+    nav = []
+    if page > 0:
+        nav.append(("Précédent", f"catgo:{cid}:{page-1}"))
+    if (page + 1) * size < len(projects):
+        nav.append(("Suivant", f"catgo:{cid}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([("Retour catégories", "cats")])
+    rows.append([("Menu", "home")])
+    await call.message.edit_text(text, reply_markup=kb(rows))
+
+@router.callback_query(F.data.startswith("cat:"))
+async def cat(call: CallbackQuery):
+    _, cid, page = call.data.split(":")
+    await render_category(call, int(cid), int(page), skip_warning=False)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("catgo:"))
+async def catgo(call: CallbackQuery):
+    _, cid, page = call.data.split(":")
+    await render_category(call, int(cid), int(page), skip_warning=True)
+    await call.answer()
 
 @router.callback_query(F.data.startswith("project:"))
-async def project_detail(call: CallbackQuery):
+async def project(call: CallbackQuery):
     parts = call.data.split(":")
     pid = int(parts[1])
-    back = "home"
-    if len(parts) >= 5 and parts[2] == "cat":
-        back = f"cat:{parts[3]}:{parts[4]}"
+    back = "cats"
+    if len(parts) >= 4:
+        back = f"catgo:{parts[2]}:{parts[3]}"
     async with SessionLocal() as session:
         demo = await is_demo(session)
         if demo:
             p = next((x for x in DEMO_PROJECTS if x["id"] == pid), None)
             if not p:
                 await call.answer("Introuvable", show_alert=True); return
-            status = "🟢 Lien actif" if p["active"] else "🔴 Lien inactif"
             text = (
-                f"🟢 {p['title']}\n\n"
-                f"{p['description']}\n\n"
+                f"🟢 {p['title']}\n\n{p['description']}\n\n"
                 f"⭐ Note : {p['rating']:.1f}/5 — {p['reviews']} avis\n"
                 f"👥 Membres : {p['members']:,}\n"
                 f"🔥 Popularité : {p['clicks']:,}\n"
-                f"{status}\n\n"
-                "Que veux-tu faire ?"
+                "🟢 Lien actif\n\nQue veux-tu faire ?"
             ).replace(",", " ")
             rows = [
-                [("🚀 Entrer dans le groupe", f"demo_join:{pid}")],
-                [("⭐ Noter", f"rate:{pid}:demo")],
-                [("⚠️ Signaler", f"report_menu:{pid}:demo")],
-                [("⬅️ Retour", back), ("🏠 Menu", "home")]
+                [("Entrer dans le groupe", f"demo_join:{pid}")],
+                [("Noter", f"rate:{pid}:demo")],
+                [("Signaler", f"report_menu:{pid}:demo")],
+                [("Retour", back), ("Menu", "home")]
             ]
         else:
             p = await session.get(Project, pid)
             if not p or p.status != "active":
                 await call.answer("Introuvable", show_alert=True); return
             avg = p.rating_sum / p.rating_count if p.rating_count else 0
-            status = "🟢 Lien actif" if p.is_link_active else "🔴 Lien inactif"
             text = (
-                f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n\n"
-                f"{p.description}\n\n"
+                f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n\n{p.description}\n\n"
                 f"⭐ Note : {avg:.1f}/5 — {p.rating_count} avis\n"
                 f"👥 Membres : {p.member_count:,}\n"
                 f"🔥 Popularité : {p.click_count:,}\n"
-                f"{status}\n\n"
-                "Que veux-tu faire ?"
+                f"{'🟢 Lien actif' if p.is_link_active else '🔴 Lien inactif'}\n\nQue veux-tu faire ?"
             ).replace(",", " ")
             rows = [
-                [("🚀 Entrer dans le groupe", f"join:{pid}")],
-                [("⭐ Noter", f"rate:{pid}:real")],
-                [("⚠️ Signaler", f"report_menu:{pid}:real")],
-                [("⬅️ Retour", back), ("🏠 Menu", "home")]
+                [("Entrer dans le groupe", f"join:{pid}")],
+                [("Noter", f"rate:{pid}:real")],
+                [("Signaler", f"report_menu:{pid}:real")],
+                [("Retour", back), ("Menu", "home")]
             ]
-        await call.message.edit_text(text, reply_markup=kb(rows))
-        await call.answer()
+    await call.message.edit_text(text, reply_markup=kb(rows))
+    await call.answer()
+
+@router.callback_query(F.data.startswith("demo_join:"))
+async def demo_join(call: CallbackQuery):
+    pid = int(call.data.split(":")[1])
+    p = next((x for x in DEMO_PROJECTS if x["id"] == pid), None)
+    await call.message.edit_text(f"Démo : l’utilisateur reçoit ici le lien.\n\n{p['url']}", reply_markup=kb([[("Retour", f"project:{pid}")], [("Menu", "home")]]))
+    await call.answer()
 
 @router.callback_query(F.data.startswith("join:"))
-async def join_real(call: CallbackQuery):
+async def join(call: CallbackQuery):
     pid = int(call.data.split(":")[1])
     async with SessionLocal() as session:
         user = await get_or_create_user(session, call.from_user)
@@ -143,28 +158,25 @@ async def join_real(call: CallbackQuery):
         p.click_count += 1
         session.add(Click(user_id=user.id, project_id=p.id, source="bot"))
         await session.commit()
-        await call.message.edit_text(f"🚀 Voici le lien du groupe :\n\n{p.invite_link}", reply_markup=kb([[("⬅️ Retour", f"project:{pid}"), ("🏠 Menu", "home")]]))
-        await call.answer()
-
-@router.callback_query(F.data.startswith("demo_join:"))
-async def join_demo(call: CallbackQuery):
-    pid = int(call.data.split(":")[1])
-    p = next((x for x in DEMO_PROJECTS if x["id"] == pid), None)
-    await call.message.edit_text(f"🎭 Démo : voici où l'utilisateur recevrait le lien.\n\n{p['url']}", reply_markup=kb([[("⬅️ Retour", f"project:{pid}"), ("🏠 Menu", "home")]]))
+        await call.message.edit_text(f"Voici le lien du groupe :\n\n{p.invite_link}", reply_markup=kb([[("Retour", f"project:{pid}")], [("Menu", "home")]]))
     await call.answer()
 
 @router.callback_query(F.data.startswith("rate:"))
-async def rate_menu(call: CallbackQuery):
+async def rate(call: CallbackQuery):
     _, pid, mode = call.data.split(":")
-    rows = [[(f"{i} ⭐", f"rate_do:{pid}:{mode}:{i}") for i in range(1, 6)], [("⬅️ Retour", f"project:{pid}"), ("🏠 Menu", "home")]]
-    await call.message.edit_text("⭐ Choisis une note :", reply_markup=kb(rows))
+    await call.message.edit_text("Choisis une note :", reply_markup=kb([
+        [("1 ⭐", f"rate_do:{pid}:{mode}:1"), ("2 ⭐", f"rate_do:{pid}:{mode}:2")],
+        [("3 ⭐", f"rate_do:{pid}:{mode}:3"), ("4 ⭐", f"rate_do:{pid}:{mode}:4")],
+        [("5 ⭐", f"rate_do:{pid}:{mode}:5")],
+        [("Retour", f"project:{pid}")]
+    ]))
     await call.answer()
 
 @router.callback_query(F.data.startswith("rate_do:"))
 async def rate_do(call: CallbackQuery):
-    _, pid, mode, rating = call.data.split(":")
+    _, pid, mode, value = call.data.split(":")
     if mode == "demo":
-        await call.answer("🎭 Note enregistrée en simulation", show_alert=True)
+        await call.answer("Démo : note enregistrée en simulation.", show_alert=True)
         return
     async with SessionLocal() as session:
         user = await get_or_create_user(session, call.from_user)
@@ -172,71 +184,59 @@ async def rate_do(call: CallbackQuery):
         if not p:
             await call.answer("Introuvable", show_alert=True); return
         if p.owner_user_id == user.id:
-            await call.answer("Tu ne peux pas noter ton propre projet.", show_alert=True); return
-        existing = await session.scalar(select(Rating).where(Rating.user_id == user.id, Rating.project_id == p.id))
-        if existing:
+            await call.answer("Tu ne peux pas noter ton propre groupe.", show_alert=True); return
+        exists = await session.scalar(select(Rating).where(Rating.user_id == user.id, Rating.project_id == p.id))
+        if exists:
             await call.answer("Tu as déjà noté ce groupe.", show_alert=True); return
-        r = int(rating)
+        r = int(value)
         p.rating_sum += r
         p.rating_count += 1
         session.add(Rating(user_id=user.id, project_id=p.id, rating=r))
         await session.commit()
-        await call.answer("Merci pour ta note ⭐", show_alert=True)
+        await call.answer("Merci pour ta note.", show_alert=True)
 
 @router.callback_query(F.data.startswith("report_menu:"))
 async def report_menu(call: CallbackQuery):
     _, pid, mode = call.data.split(":")
-    rows = [
-        [("🔴 Lien mort", f"report:{pid}:{mode}:lien_mort")],
-        [("⚠️ Scam / arnaque", f"report:{pid}:{mode}:scam")],
-        [("🚫 Contenu interdit", f"report:{pid}:{mode}:contenu_interdit")],
-        [("⬅️ Retour", f"project:{pid}"), ("🏠 Menu", "home")]
-    ]
-    await call.message.edit_text("Pourquoi veux-tu signaler ce groupe ?", reply_markup=kb(rows))
+    await call.message.edit_text("Pourquoi veux-tu signaler ce groupe ?", reply_markup=kb([
+        [("Lien mort", f"report:{pid}:{mode}:lien_mort")],
+        [("Scam / arnaque", f"report:{pid}:{mode}:scam")],
+        [("Contenu interdit", f"report:{pid}:{mode}:contenu_interdit")],
+        [("Retour", f"project:{pid}")]
+    ]))
     await call.answer()
 
 @router.callback_query(F.data.startswith("report:"))
-async def report_do(call: CallbackQuery):
+async def report(call: CallbackQuery):
     _, pid, mode, reason = call.data.split(":")
     if mode == "demo":
-        await call.answer("🎭 Signalement simulé", show_alert=True)
+        await call.answer("Démo : signalement simulé.", show_alert=True)
         return
     async with SessionLocal() as session:
         user = await get_or_create_user(session, call.from_user)
         session.add(Report(user_id=user.id, project_id=int(pid), reason=reason))
         await session.commit()
-    await call.answer("Signalement envoyé à la modération.", show_alert=True)
+    await call.answer("Signalement envoyé.", show_alert=True)
 
 @router.callback_query(F.data.startswith("top:"))
 async def top(call: CallbackQuery):
-    page = int(call.data.split(":")[1])
+    # simple alias: show all active sorted
     async with SessionLocal() as session:
         demo = await is_demo(session)
         if demo:
-            projects = sorted(DEMO_PROJECTS, key=lambda p: (p["rating"], p["clicks"]), reverse=True)
+            projects = sorted(DEMO_PROJECTS, key=lambda x: (x["rating"], x["clicks"]), reverse=True)
         else:
-            projects = list((await session.scalars(
-                select(Project).where(Project.status == "active").order_by(desc(Project.rating_sum), desc(Project.click_count))
-            )).all())
-        size = settings.PAGE_SIZE
-        chunk = projects[page*size:(page+1)*size]
-        text = f"⭐ Top groupes — page {page+1}\n\n"
-        rows = []
-        for p in chunk:
-            if isinstance(p, dict):
-                text += f"🟢 {p['title']}\n⭐ {p['rating']:.1f}/5 — 👥 {p['members']:,}\n\n".replace(",", " ")
-                rows.append([(f"📌 {p['title']}", f"project:{p['id']}")])
-            else:
-                avg = p.rating_sum / p.rating_count if p.rating_count else 0
-                text += f"🟢 {p.title}\n⭐ {avg:.1f}/5 — 👥 {p.member_count:,}\n\n".replace(",", " ")
-                rows.append([(f"📌 {p.title}", f"project:{p.id}")])
-        nav = []
-        if page > 0:
-            nav.append(("⬅️ Précédent", f"top:{page-1}"))
-        if (page+1)*size < len(projects):
-            nav.append(("➡️ Suivant", f"top:{page+1}"))
-        if nav:
-            rows.append(nav)
-        rows.append([("🏠 Menu", "home")])
-        await call.message.edit_text(text or "Aucun groupe.", reply_markup=kb(rows))
-        await call.answer()
+            projects = list((await session.scalars(select(Project).where(Project.status == "active").order_by(desc(Project.rating_sum), desc(Project.click_count)))).all())
+    text = "Top groupes\n\n"
+    rows = []
+    for p in projects[:settings.PAGE_SIZE]:
+        if isinstance(p, dict):
+            text += f"{p['title']} — ⭐ {p['rating']:.1f}/5\n"
+            rows.append([(p["title"], f"project:{p['id']}")])
+        else:
+            avg = p.rating_sum / p.rating_count if p.rating_count else 0
+            text += f"{p.title} — ⭐ {avg:.1f}/5\n"
+            rows.append([(p.title, f"project:{p.id}")])
+    rows.append([("Menu", "home")])
+    await call.message.edit_text(text, reply_markup=kb(rows))
+    await call.answer()

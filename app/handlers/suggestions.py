@@ -15,7 +15,7 @@ class SuggestCat(StatesGroup):
 @router.callback_query(F.data == "suggest_cat:start")
 async def suggest_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(SuggestCat.name)
-    await call.message.edit_text("💡 Quelle catégorie veux-tu suggérer ?", reply_markup=cancel_kb())
+    await call.message.edit_text("Quelle catégorie veux-tu suggérer ?", reply_markup=cancel_kb())
     await call.answer()
 
 @router.message(SuggestCat.name)
@@ -25,4 +25,4 @@ async def suggest_name(message: Message, state: FSMContext):
         session.add(CategorySuggestion(user_id=user.id, name=message.text.strip()))
         await session.commit()
     await state.clear()
-    await message.answer("✅ Ta suggestion a été envoyée à la modération.", reply_markup=kb([[("🏠 Menu", "home")]]))
+    await message.answer("Suggestion envoyée à la modération.", reply_markup=kb([[("Menu", "home")]]))
