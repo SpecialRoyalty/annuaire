@@ -67,3 +67,9 @@ CREATE SCHEMA public;
   - 🛠️ Modération
 - Emojis remis partout pour faciliter la navigation.
 - Démo utilisateur et démo listeur accessibles même sans activer le mode démo.
+
+
+## Correctif V4
+
+- Les boutons 🎭 Démo utilisateur et 📊 Démo listeur s'affichent uniquement si le mode démo est ON.
+- Ajout de `/dbcheck` pour vérifier depuis Telegram si les tables existent vraiment.
