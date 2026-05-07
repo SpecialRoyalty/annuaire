@@ -1,172 +1,253 @@
 from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from app.config import get_settings
+from sqlalchemy import select
 from app.db.session import SessionLocal
-from app.db.models import UserRole
-from app.keyboards import super_admin_menu, super_admin_project_keyboard, back_home, cancel_keyboard
-from app.services import repo
+from app.config import settings
+from app.models.models import Project, CategorySuggestion, Category, User
+from app.services.user_service import get_or_create_user
+from app.services.settings_service import get_setting, set_setting
+from app.keyboards.common import kb, cancel_kb
 
 router = Router()
-settings = get_settings()
 
-class AdminCategory(StatesGroup):
-    add_name = State()
+class AdminReason(StatesGroup):
+    reject_project = State()
+    reject_category = State()
+    add_category = State()
 
-async def is_sa(session, tg_user) -> bool:
-    user = await repo.get_or_create_user(session, tg_user, settings.super_admin_ids)
-    return user.role == UserRole.SUPER_ADMIN.value
+async def is_admin(session, tg_user):
+    user = await get_or_create_user(session, tg_user)
+    return user.is_super_admin
 
-@router.callback_query(F.data == "sa:menu")
-async def sa_menu(call: CallbackQuery):
+@router.message(Command("moderation"))
+async def moderation_cmd(message: Message):
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
+        if not await is_admin(session, message.from_user):
             return
-    await call.message.edit_text("🛠 <b>Modération</b>", reply_markup=super_admin_menu())
+    await message.answer("🛠 Modération", reply_markup=await mod_keyboard())
+
+async def mod_keyboard():
+    async with SessionLocal() as session:
+        demo = await get_setting(session, "demo_mode", "false")
+    return kb([
+        [("🕓 Demandes listing", "mod:pending")],
+        [("📂 Suggestions catégories", "mod:cat_suggestions")],
+        [("➕ Ajouter catégorie", "mod:add_cat")],
+        [("🗑 Supprimer catégorie", "mod:delete_cat_menu")],
+        [("🎭 Mode démo : " + ("ON" if demo == "true" else "OFF"), "mod:toggle_demo")],
+        [("🏠 Menu", "home")]
+    ])
+
+@router.callback_query(F.data == "mod:menu")
+async def mod_menu(call: CallbackQuery):
+    async with SessionLocal() as session:
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+    await call.message.edit_text("🛠 Modération", reply_markup=await mod_keyboard())
     await call.answer()
 
-@router.callback_query(F.data == "sa:pending")
-async def sa_pending(call: CallbackQuery):
+@router.callback_query(F.data == "mod:toggle_demo")
+async def toggle_demo(call: CallbackQuery):
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        projects = await repo.pending_projects(session)
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        current = await get_setting(session, "demo_mode", "false")
+        await set_setting(session, "demo_mode", "false" if current == "true" else "true")
+    await call.message.edit_text("🎭 Mode démo modifié.", reply_markup=await mod_keyboard())
+    await call.answer()
+
+@router.callback_query(F.data == "mod:pending")
+async def mod_pending(call: CallbackQuery):
+    async with SessionLocal() as session:
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        projects = list((await session.scalars(select(Project).where(Project.status.in_(["pending_bot", "pending_review"])))).all())
+    text = "🕓 Demandes de listing\n\n"
+    rows = []
     if not projects:
-        await call.message.edit_text("Aucune demande en attente.", reply_markup=super_admin_menu())
-    else:
-        rows = [[InlineKeyboardButton(text=f"{p.title} — {p.status}", callback_data=f"sa:open:{p.id}")] for p in projects]
-        rows.append([InlineKeyboardButton(text="⬅️ Modération", callback_data="sa:menu")])
-        await call.message.edit_text("🕓 Demandes en attente :", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        text += "Aucune demande."
+    for p in projects:
+        text += f"• #{p.id} — {p.title} — {p.status}\n"
+        rows.append([(f"📌 {p.title}", f"mod:project:{p.id}")])
+    rows.append([("⬅️ Retour", "mod:menu")])
+    await call.message.edit_text(text, reply_markup=kb(rows))
     await call.answer()
 
-@router.callback_query(F.data.startswith("sa:open:"))
-async def sa_open(call: CallbackQuery):
-    project_id = int(call.data.split(":")[-1])
+@router.callback_query(F.data.startswith("mod:project:"))
+async def mod_project(call: CallbackQuery):
+    pid = int(call.data.split(":")[2])
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        p = await repo.get_project(session, project_id)
-    if not p:
-        await call.answer("Introuvable.", show_alert=True)
-        return
-    await call.message.edit_text(
-        f"<b>{p.title}</b>\n{p.description or ''}\n\nLien : {p.invite_link}\nStatut : {p.status}\nGroupe ID : {p.group_chat_id}",
-        reply_markup=super_admin_project_keyboard(p.id),
-    )
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        p = await session.get(Project, pid)
+        if not p:
+            await call.answer("Introuvable", show_alert=True); return
+        text = f"📌 #{p.id} {p.title}\n\n{p.description}\n\nLien : {p.invite_link}\nStatut : {p.status}\nBot warnings : {p.bot_warning_count}/3"
+    rows = [
+        [("✅ Approuver", f"mod:approve:{pid}")],
+        [("❌ Refuser avec motif", f"mod:reject:{pid}")],
+        [("⬅️ Retour", "mod:pending")]
+    ]
+    await call.message.edit_text(text, reply_markup=kb(rows))
     await call.answer()
 
-@router.callback_query(F.data.startswith("sa:approve:"))
-async def sa_approve(call: CallbackQuery):
-    project_id = int(call.data.split(":")[-1])
+@router.callback_query(F.data.startswith("mod:approve:"))
+async def mod_approve(call: CallbackQuery):
+    pid = int(call.data.split(":")[2])
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        p = await repo.get_project(session, project_id)
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        p = await session.get(Project, pid)
         if p:
-            await repo.approve_project(session, p)
-    await call.message.edit_text("✅ Groupe validé et listé.", reply_markup=super_admin_menu())
+            p.status = "active"
+            p.moderation_enabled = p.wants_moderation
+            owner = await session.get(User, p.owner_user_id)
+            await session.commit()
+            if owner:
+                try:
+                    await call.bot.send_message(owner.telegram_id, f"✅ Ton groupe {p.title} a été approuvé et listé.")
+                except Exception:
+                    pass
+    await call.message.edit_text("✅ Projet approuvé.", reply_markup=kb([[("⬅️ Retour", "mod:pending")]]))
     await call.answer()
 
-@router.callback_query(F.data.startswith("sa:reject:"))
-async def sa_reject(call: CallbackQuery):
-    project_id = int(call.data.split(":")[-1])
+@router.callback_query(F.data.startswith("mod:reject:"))
+async def mod_reject_start(call: CallbackQuery, state: FSMContext):
+    pid = int(call.data.split(":")[2])
+    await state.update_data(project_id=pid)
+    await state.set_state(AdminReason.reject_project)
+    await call.message.edit_text("Écris le motif du refus :", reply_markup=cancel_kb())
+    await call.answer()
+
+@router.message(AdminReason.reject_project)
+async def mod_reject_finish(message: Message, state: FSMContext):
+    data = await state.get_data()
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
+        if not await is_admin(session, message.from_user):
             return
-        p = await repo.get_project(session, project_id)
+        p = await session.get(Project, data["project_id"])
         if p:
-            await repo.reject_project(session, p)
-    await call.message.edit_text("❌ Groupe refusé.", reply_markup=super_admin_menu())
-    await call.answer()
-
-@router.callback_query(F.data.startswith("sa:ban:"))
-async def sa_ban(call: CallbackQuery):
-    project_id = int(call.data.split(":")[-1])
-    async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        p = await repo.get_project(session, project_id)
-        if p:
-            await repo.ban_project(session, p, "Banni par modération")
-    await call.message.edit_text("🚫 Groupe banni.", reply_markup=super_admin_menu())
-    await call.answer()
-
-@router.callback_query(F.data == "sa:cat:add")
-async def sa_cat_add(call: CallbackQuery, state: FSMContext):
-    async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-    await state.set_state(AdminCategory.add_name)
-    await call.message.edit_text("📂 Nom de la nouvelle catégorie ?", reply_markup=cancel_keyboard())
-    await call.answer()
-
-@router.message(AdminCategory.add_name)
-async def sa_cat_add_save(message: Message, state: FSMContext):
-    name = (message.text or "").strip()
-    async with SessionLocal() as session:
-        if not await is_sa(session, message.from_user):
-            await message.answer("Accès refusé.")
-            await state.clear()
-            return
-        await repo.add_category(session, name)
+            p.status = "rejected"
+            owner = await session.get(User, p.owner_user_id)
+            await session.commit()
+            if owner:
+                try:
+                    await message.bot.send_message(owner.telegram_id, f"❌ Ton listing {p.title} a été refusé.\n\nMotif :\n{message.text}")
+                except Exception:
+                    pass
     await state.clear()
-    await message.answer(f"✅ Catégorie ajoutée : {name}", reply_markup=super_admin_menu())
+    await message.answer("Refus envoyé.", reply_markup=kb([[("🛠 Modération", "mod:menu")]]))
 
-@router.callback_query(F.data == "sa:cat:delete_menu")
-async def sa_cat_delete_menu(call: CallbackQuery):
+@router.callback_query(F.data == "mod:cat_suggestions")
+async def mod_cat_suggestions(call: CallbackQuery):
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        cats = await repo.list_categories(session)
-    rows = [[InlineKeyboardButton(text=f"🗑 {c.name}", callback_data=f"sa:cat:delete:{c.id}")] for c in cats]
-    rows.append([InlineKeyboardButton(text="⬅️ Modération", callback_data="sa:menu")])
-    await call.message.edit_text("⚠️ Supprimer une catégorie supprime aussi tous les groupes listés dedans.", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        suggestions = list((await session.scalars(select(CategorySuggestion).where(CategorySuggestion.status == "pending"))).all())
+    text = "📂 Suggestions catégories\n\n"
+    rows = []
+    if not suggestions:
+        text += "Aucune suggestion."
+    for s in suggestions:
+        text += f"• #{s.id} — {s.name}\n"
+        rows.append([(f"📂 {s.name}", f"mod:cat_sug:{s.id}")])
+    rows.append([("⬅️ Retour", "mod:menu")])
+    await call.message.edit_text(text, reply_markup=kb(rows))
     await call.answer()
 
-@router.callback_query(F.data.startswith("sa:cat:delete:"))
-async def sa_cat_delete(call: CallbackQuery):
-    cat_id = int(call.data.split(":")[-1])
-    async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        await repo.delete_category_and_projects(session, cat_id)
-    await call.message.edit_text("🗑 Catégorie supprimée avec tous ses groupes et infos.", reply_markup=super_admin_menu())
+@router.callback_query(F.data.startswith("mod:cat_sug:"))
+async def mod_cat_sug(call: CallbackQuery):
+    sid = int(call.data.split(":")[2])
+    await call.message.edit_text("Que faire avec cette catégorie ?", reply_markup=kb([
+        [("✅ Valider", f"mod:cat_accept:{sid}")],
+        [("❌ Refuser avec motif", f"mod:cat_reject:{sid}")],
+        [("⬅️ Retour", "mod:cat_suggestions")]
+    ]))
     await call.answer()
 
-@router.callback_query(F.data == "sa:cat:suggestions")
-async def sa_cat_suggestions(call: CallbackQuery):
+@router.callback_query(F.data.startswith("mod:cat_accept:"))
+async def mod_cat_accept(call: CallbackQuery):
+    sid = int(call.data.split(":")[2])
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
-            return
-        suggestions = await repo.list_category_suggestions(session)
-    text = "💡 <b>Suggestions de catégories</b>\n\n"
-    text += "Aucune suggestion." if not suggestions else "\n".join([f"• {s.name}" for s in suggestions])
-    await call.message.edit_text(text, reply_markup=super_admin_menu())
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        s = await session.get(CategorySuggestion, sid)
+        if s:
+            exists = await session.scalar(select(Category).where(Category.name == s.name))
+            if not exists:
+                session.add(Category(name=s.name))
+            s.status = "accepted"
+            user = await session.get(User, s.user_id)
+            await session.commit()
+            if user:
+                try: await call.bot.send_message(user.telegram_id, f"✅ Ta catégorie « {s.name} » a été acceptée.")
+                except Exception: pass
+    await call.message.edit_text("✅ Catégorie acceptée.", reply_markup=kb([[("⬅️ Retour", "mod:cat_suggestions")]]))
     await call.answer()
 
-@router.callback_query(F.data == "sa:demo")
-async def sa_demo(call: CallbackQuery):
+@router.callback_query(F.data.startswith("mod:cat_reject:"))
+async def mod_cat_reject(call: CallbackQuery, state: FSMContext):
+    sid = int(call.data.split(":")[2])
+    await state.update_data(suggestion_id=sid)
+    await state.set_state(AdminReason.reject_category)
+    await call.message.edit_text("Écris le motif de refus de la catégorie :", reply_markup=cancel_kb())
+    await call.answer()
+
+@router.message(AdminReason.reject_category)
+async def mod_cat_reject_finish(message: Message, state: FSMContext):
+    data = await state.get_data()
     async with SessionLocal() as session:
-        if not await is_sa(session, call.from_user):
-            await call.answer("Accès refusé.", show_alert=True)
+        if not await is_admin(session, message.from_user):
             return
-        active = await repo.is_demo_mode(session)
-        await repo.set_setting(session, "demo_mode", "false" if active else "true")
-        new_state = not active
-    await call.message.edit_text(
-        f"🎭 Mode démo {'activé' if new_state else 'désactivé'}.\n\n"
-        + ("Le menu affichera maintenant les parcours démo utilisateur et listeur." if new_state else "Le bot revient au mode réel avec la vraie base."),
-        reply_markup=super_admin_menu(),
-    )
+        s = await session.get(CategorySuggestion, data["suggestion_id"])
+        if s:
+            s.status = "rejected"
+            s.refusal_reason = message.text
+            user = await session.get(User, s.user_id)
+            await session.commit()
+            if user:
+                try: await message.bot.send_message(user.telegram_id, f"❌ Ta catégorie « {s.name} » a été refusée.\n\nMotif :\n{message.text}")
+                except Exception: pass
+    await state.clear()
+    await message.answer("Refus envoyé.", reply_markup=kb([[("🛠 Modération", "mod:menu")]]))
+
+@router.callback_query(F.data == "mod:add_cat")
+async def add_cat_start(call: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminReason.add_category)
+    await call.message.edit_text("Nom de la nouvelle catégorie :", reply_markup=cancel_kb())
+    await call.answer()
+
+@router.message(AdminReason.add_category)
+async def add_cat_finish(message: Message, state: FSMContext):
+    async with SessionLocal() as session:
+        if not await is_admin(session, message.from_user):
+            return
+        session.add(Category(name=message.text.strip()))
+        await session.commit()
+    await state.clear()
+    await message.answer("✅ Catégorie ajoutée.", reply_markup=kb([[("🛠 Modération", "mod:menu")]]))
+
+@router.callback_query(F.data == "mod:delete_cat_menu")
+async def delete_cat_menu(call: CallbackQuery):
+    async with SessionLocal() as session:
+        cats = list((await session.scalars(select(Category).order_by(Category.name))).all())
+    rows = [[(f"🗑 {c.name}", f"mod:delete_cat:{c.id}")] for c in cats]
+    rows.append([("⬅️ Retour", "mod:menu")])
+    await call.message.edit_text("⚠️ Supprimer une catégorie supprimera aussi tous les groupes liés.", reply_markup=kb(rows))
+    await call.answer()
+
+@router.callback_query(F.data.startswith("mod:delete_cat:"))
+async def delete_cat(call: CallbackQuery):
+    cid = int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        if not await is_admin(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        cat = await session.get(Category, cid)
+        if cat:
+            await session.delete(cat)
+            await session.commit()
+    await call.message.edit_text("🗑 Catégorie supprimée avec ses groupes liés.", reply_markup=kb([[("🛠 Modération", "mod:menu")]]))
     await call.answer()
