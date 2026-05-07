@@ -18,10 +18,7 @@ async def init_db():
             if not exists:
                 session.add(Category(name=name, position=i))
 
-        for key, value in {
-            "demo_mode": "false",
-            "total_starts": "0"
-        }.items():
+        for key, value in {"demo_mode": "false", "total_starts": "0"}.items():
             exists = await session.get(AppSetting, key)
             if not exists:
                 session.add(AppSetting(key=key, value=value))
