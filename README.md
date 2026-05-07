@@ -1,53 +1,55 @@
-# TousLesLiens Bot — version complète
-
-Bot Telegram Railway + PostgreSQL pour lister des groupes Telegram, avec mode démo, interface utilisateur, interface listeur, modération, catégories, stats, signalements et système de sanctions.
+# Tous Les Liens — Bot Telegram complet
 
 ## Installation Railway
 
-1. Crée un projet Railway.
-2. Ajoute PostgreSQL.
-3. Ajoute les variables dans le service bot :
+1. Ajoute PostgreSQL.
+2. Mets les variables dans le service bot :
 
 ```env
-BOT_TOKEN=ton_token_botfather
+BOT_TOKEN=
 BOT_USERNAME=touslesliens_bot
-DATABASE_URL=postgresql+asyncpg://postgres:password@postgres.railway.internal:5432/railway
+DATABASE_URL=postgresql+asyncpg://postgres:PASSWORD@postgres.railway.internal:5432/railway
 SUPER_ADMIN_IDS=ton_id_telegram
-SUPPORT_USERNAME=ton_support_sans_@
+SUPPORT_USERNAME=support
 PAGE_SIZE=3
 START_STATS_MIN=1000
-PENDING_CONNECT_HOURS=1
 MAX_BOT_WARNINGS=3
-INACTIVE_DAYS_BEFORE_DELIST=10
+PENDING_CONNECT_HOURS=1
 ```
 
-Important : `DATABASE_URL` doit commencer par `postgresql+asyncpg://`, sans guillemets.
+Important : `DATABASE_URL` doit commencer par `postgresql+asyncpg://` et ne doit pas avoir de guillemets.
 
-4. Déploie.
-
-## Fonctions incluses
-
-- Mode démo activable/désactivable depuis modération.
-- Accueil avec nombre d'utilisateurs affiché seulement à partir de 1000.
-- Listing gratuit.
-- 3 groupes par page.
-- Fiche groupe détaillée.
-- Note 1 à 5 étoiles.
-- Signalement lien mort / scam / contenu interdit.
-- Suggestion catégorie avec validation/refus + motif.
-- Interface listeur après création d'un groupe.
-- Validation humaine des projets.
-- Motif obligatoire en cas de refus.
-- Ajout obligatoire du bot comme admin dans le groupe.
-- Alerte après 1h si bot non ajouté.
-- 3 warnings bot absent/retiré = projet banni + owner bloqué pour relister.
-- Modération gratuite optionnelle.
-- Mots interdits : suppression + mute 1 jour, puis 7 jours si récidive.
-- Anti-liens : suppression + ban direct.
-- Blacklist globale : après 3 bans réseau, accès au bot refusé.
-
-## Commandes utiles
+## Commandes
 
 - `/start`
-- `/moderation` pour les super admins
-- `/connect PROJECT_ID` à envoyer dans le groupe après ajout du bot admin
+- `/moderation`
+- `/connect ID_PROJET` dans le groupe après avoir ajouté le bot admin.
+
+## Reset DB si besoin
+
+```sql
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+```
+
+## Inclus
+
+- Listing gratuit
+- Validation/refus avec motif
+- Interface utilisateur
+- Interface listeur
+- Interface modération
+- Mode démo ON/OFF
+- Catégories
+- Warning configurable par catégorie
+- 3 groupes par page
+- Fiche groupe
+- Notes
+- Signalements
+- Message pin viral
+- Détection bot retiré / absent
+- 3 warnings = blacklist owner
+- Modération optionnelle
+- Mots interdits
+- Anti-liens
+- Vote quotidien automatique type sondage
