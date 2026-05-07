@@ -15,7 +15,8 @@ async def home_content(session, tg_user):
     user = await get_or_create_user(session, tg_user)
     total = await get_total_starts(session)
     count_line = f"\n\n👥 {total:,} utilisateurs connectés".replace(",", " ") if total >= settings.START_STATS_MIN else ""
-    demo_line = "\n\n🎭 Mode démo actif : explore les deux côtés du bot." if await is_demo(session) else ""
+    demo_active = await is_demo(session)
+    demo_line = "\n\n🎭 Mode démo actif : explore les deux côtés du bot." if demo_active else ""
     is_owner = bool(await session.scalar(select(Project.id).where(Project.owner_user_id == user.id).limit(1)))
     text = (
         "🔗 Tous Les Liens\n\n"
@@ -24,7 +25,7 @@ async def home_content(session, tg_user):
         "Listing et service 100% gratuits."
         f"{demo_line}"
     )
-    return user, text, main_menu(is_owner=is_owner, is_moderator=user.is_super_admin)
+    return user, text, main_menu(is_owner=is_owner, is_moderator=user.is_super_admin, demo_active=demo_active)
 
 async def is_banned(event, user):
     if user.global_banned:
