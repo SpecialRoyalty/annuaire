@@ -1,30 +1,31 @@
-from functools import lru_cache
-from pydantic_settings import BaseSettings
+import os
+from dataclasses import dataclass
+from dotenv import load_dotenv
 
+load_dotenv()
 
-class Settings(BaseSettings):
-    BOT_TOKEN: str
-    DATABASE_URL: str
-    SUPER_ADMIN_IDS: str = ""
-    WEBHOOK_URL: str | None = None
-    WEBHOOK_SECRET: str = "change-me"
-    PORT: int = 8080
-    BOT_USERNAME: str = "touslesliens_bot"
+def _ints(value: str) -> set[int]:
+    if not value:
+        return set()
+    return {int(x.strip()) for x in value.split(",") if x.strip().isdigit()}
 
-    @property
-    def super_admin_ids(self) -> set[int]:
-        ids: set[int] = set()
-        for item in self.SUPER_ADMIN_IDS.split(','):
-            item = item.strip()
-            if item.isdigit():
-                ids.add(int(item))
-        return ids
+@dataclass
+class Settings:
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "touslesliens_bot")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    SUPER_ADMIN_IDS: set[int] = None
+    SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "support")
+    PAGE_SIZE: int = int(os.getenv("PAGE_SIZE", "3"))
+    START_STATS_MIN: int = int(os.getenv("START_STATS_MIN", "1000"))
+    PENDING_CONNECT_HOURS: int = int(os.getenv("PENDING_CONNECT_HOURS", "1"))
+    MAX_BOT_WARNINGS: int = int(os.getenv("MAX_BOT_WARNINGS", "3"))
+    INACTIVE_DAYS_BEFORE_DELIST: int = int(os.getenv("INACTIVE_DAYS_BEFORE_DELIST", "10"))
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    def __post_init__(self):
+        self.SUPER_ADMIN_IDS = _ints(os.getenv("SUPER_ADMIN_IDS", ""))
+        if self.DATABASE_URL.startswith("postgresql://"):
+            self.DATABASE_URL = self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        self.DATABASE_URL = self.DATABASE_URL.strip().strip('"').strip("'")
 
-
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+settings = Settings()
