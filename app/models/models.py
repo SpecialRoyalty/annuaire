@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 class User(Base):
@@ -20,18 +20,20 @@ class Category(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    warning_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    warning_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(String(150))
     description: Mapped[str] = mapped_column(Text, default="")
     invite_link: Mapped[str] = mapped_column(Text)
-    group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     group_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    status: Mapped[str] = mapped_column(String(50), default="pending_bot")
+    status: Mapped[str] = mapped_column(String(50), default="pending_bot") # pending_bot, pending_review, active, rejected, banned, deleted
     is_link_active: Mapped[bool] = mapped_column(Boolean, default=True)
     wants_moderation: Mapped[bool] = mapped_column(Boolean, default=False)
     moderation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -41,9 +43,8 @@ class Project(Base):
     rating_sum: Mapped[int] = mapped_column(Integer, default=0)
     rating_count: Mapped[int] = mapped_column(Integer, default=0)
     bot_warning_count: Mapped[int] = mapped_column(Integer, default=0)
-    pin_warning_count: Mapped[int] = mapped_column(Integer, default=0)
+    pin_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     listed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class Rating(Base):
     __tablename__ = "ratings"
@@ -52,6 +53,14 @@ class Rating(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     rating: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class DailyVote(Base):
+    __tablename__ = "daily_votes"
+    __table_args__ = (UniqueConstraint("project_id", "telegram_id", name="uq_daily_vote_project_user"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    telegram_id: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class Click(Base):
@@ -97,3 +106,4 @@ class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
