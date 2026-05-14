@@ -33,11 +33,14 @@ class Project(Base):
     invite_link: Mapped[str] = mapped_column(Text)
     group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     group_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    status: Mapped[str] = mapped_column(String(50), default="pending_bot") # pending_bot, pending_review, active, rejected, banned, deleted
+    status: Mapped[str] = mapped_column(String(50), default="pending_review")
     is_link_active: Mapped[bool] = mapped_column(Boolean, default=True)
     wants_moderation: Mapped[bool] = mapped_column(Boolean, default=False)
     moderation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     member_count: Mapped[int] = mapped_column(Integer, default=0)
+    member_count_previous: Mapped[int] = mapped_column(Integer, default=0)
+    growth_last_sync: Mapped[int] = mapped_column(Integer, default=0)
+    last_member_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     click_count: Mapped[int] = mapped_column(Integer, default=0)
     start_count: Mapped[int] = mapped_column(Integer, default=0)
     rating_sum: Mapped[int] = mapped_column(Integer, default=0)
@@ -48,7 +51,7 @@ class Project(Base):
 
 class Rating(Base):
     __tablename__ = "ratings"
-    __table_args__ = (UniqueConstraint("user_id", "project_id", name="uq_rating_user_project"),)
+    __table_args__ = (UniqueConstraint("user_id","project_id", name="uq_rating_user_project"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
@@ -57,7 +60,7 @@ class Rating(Base):
 
 class DailyVote(Base):
     __tablename__ = "daily_votes"
-    __table_args__ = (UniqueConstraint("project_id", "telegram_id", name="uq_daily_vote_project_user"),)
+    __table_args__ = (UniqueConstraint("project_id","telegram_id", name="uq_daily_vote_project_user"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     telegram_id: Mapped[int] = mapped_column(BigInteger)
@@ -100,6 +103,15 @@ class ModerationStrike(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     count: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class NetworkBanLog(Base):
+    __tablename__ = "network_ban_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    source_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    reason: Mapped[str] = mapped_column(String(120), default="network_ban")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class AppSetting(Base):
