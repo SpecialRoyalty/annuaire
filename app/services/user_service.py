@@ -1,6 +1,6 @@
 from sqlalchemy import select
-from app.models.models import User
 from app.config import settings
+from app.models.models import User
 
 async def get_or_create_user(session, tg_user):
     user = await session.scalar(select(User).where(User.telegram_id == tg_user.id))
@@ -9,7 +9,7 @@ async def get_or_create_user(session, tg_user):
             telegram_id=tg_user.id,
             username=tg_user.username,
             first_name=tg_user.first_name,
-            is_super_admin=tg_user.id in settings.SUPER_ADMIN_IDS,
+            is_super_admin=tg_user.id in settings.SUPER_ADMIN_IDS
         )
         session.add(user)
         await session.commit()

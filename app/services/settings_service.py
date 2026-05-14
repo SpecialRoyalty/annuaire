@@ -1,7 +1,7 @@
 from datetime import datetime
 from app.models.models import AppSetting
 
-async def get_setting(session, key: str, default: str = "") -> str:
+async def get_setting(session, key: str, default: str="") -> str:
     s = await session.get(AppSetting, key)
     return s.value if s else default
 
@@ -11,8 +11,7 @@ async def set_setting(session, key: str, value: str):
         s.value = value
         s.updated_at = datetime.utcnow()
     else:
-        s = AppSetting(key=key, value=value)
-        session.add(s)
+        session.add(AppSetting(key=key, value=value))
     await session.commit()
 
 async def is_demo(session) -> bool:
