@@ -53,7 +53,7 @@ async def render_cat(call, cid:int, page:int, skip_warning=False):
             rows.append([(f"📌 {p['title']}", f"project:{p['id']}:{cid}:{page}")])
         else:
             avg = p.rating_sum/p.rating_count if p.rating_count else 0
-            text += f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n⭐ {avg:.1f}/5 — 👥 {p.member_count:,} membres\n📈 {p.growth_last_sync:+} depuis la dernière sync\n\n".replace(",", " ")
+            text += f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n⭐ {avg:.1f}/5 — 👥 {p.member_count:,} membres\n📈 {(p.growth_last_sync or 0):+} depuis la dernière sync\n\n".replace(",", " ")
             rows.append([(f"📌 {p.title}", f"project:{p.id}:{cid}:{page}")])
     nav=[]
     if page>0: nav.append(("⬅️ Précédent",f"catgo:{cid}:{page-1}"))
@@ -89,7 +89,7 @@ async def project(call: CallbackQuery):
             p = await session.get(Project, pid)
             if not p or p.status!="active": await call.answer("Introuvable", show_alert=True); return
             avg = p.rating_sum/p.rating_count if p.rating_count else 0
-            text = f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n\n{p.description}\n\n⭐ Note : {avg:.1f}/5 — {p.rating_count} avis\n👥 Membres : {p.member_count:,}\n📈 {p.growth_last_sync:+} depuis la dernière sync\n🔥 Popularité : {p.click_count:,}\n{'🟢 Lien actif' if p.is_link_active else '🔴 Lien inactif'}\n\nQue veux-tu faire ?".replace(",", " ")
+            text = f"{'🟢' if p.is_link_active else '🔴'} {p.title}\n\n{p.description}\n\n⭐ Note : {avg:.1f}/5 — {p.rating_count} avis\n👥 Membres : {p.member_count:,}\n📈 {(p.growth_last_sync or 0):+} depuis la dernière sync\n🔥 Popularité : {p.click_count:,}\n{'🟢 Lien actif' if p.is_link_active else '🔴 Lien inactif'}\n\nQue veux-tu faire ?".replace(",", " ")
             rows = [[("🚀 Entrer dans le groupe",f"join:{pid}")],[("⭐ Noter",f"rate:{pid}:real")],[("⚠️ Signaler",f"report_menu:{pid}:real")],[("⬅️ Retour",back)],[("🏠 Menu","home")]]
     await call.message.edit_text(text, reply_markup=kb(rows)); await call.answer()
 
