@@ -1,3 +1,4 @@
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -14,149 +15,209 @@ from app.keyboards.common import kb, cancel_kb
 router = Router()
 
 class AdminState(StatesGroup):
-    reject_project=State(); reject_category=State(); add_category=State(); edit_warning=State()
+    reject_project = State()
+    reject_category = State()
+    add_category = State()
+    edit_warning = State()
 
-async def admin_only(session,tg_user):
-    user=await get_or_create_user(session,tg_user); return user.is_super_admin
+async def admin_only(session, tg_user):
+    user = await get_or_create_user(session, tg_user)
+    return user.is_super_admin
 
 async def mod_kb():
-    async with SessionLocal() as session: demo=await get_setting(session,"demo_mode","false")
-    return kb([[("🕓 Demandes listing","mod:pending")],[("📂 Suggestions catégories","mod:suggestions")],[("➕ Ajouter catégorie","mod:add_cat")],[("🗑️ Supprimer catégorie","mod:delete_cat_menu")],[("⚠️ Warnings catégories","mod:warning_menu")],[("🎭 Mode démo : "+("ON" if demo=="true" else "OFF"),"mod:toggle_demo")],[("🏠 Menu","home")]])
+    async with SessionLocal() as session:
+        demo = await get_setting(session, "demo_mode", "false")
+    return kb([
+        [("🕓 Demandes listing", "mod:pending")],
+        [("📂 Suggestions catégories", "mod:suggestions")],
+        [("➕ Ajouter catégorie", "mod:add_cat")],
+        [("🗑️ Supprimer catégorie", "mod:delete_cat_menu")],
+        [("⚠️ Warnings catégories", "mod:warning_menu")],
+        [("🎭 Mode démo : " + ("ON" if demo == "true" else "OFF"), "mod:toggle_demo")],
+        [("🏠 Menu", "home")]
+    ])
 
 @router.message(Command("moderation"))
-async def moderation(message:Message):
+async def moderation(message: Message):
     async with SessionLocal() as session:
-        if not await admin_only(session,message.from_user): return
+        if not await admin_only(session, message.from_user):
+            return
     await message.answer("🛠️ Modération", reply_markup=await mod_kb())
 
-@router.callback_query(F.data=="mod:menu")
-async def mod_menu(call:CallbackQuery):
+@router.callback_query(F.data == "mod:menu")
+async def mod_menu(call: CallbackQuery):
     async with SessionLocal() as session:
-        if not await admin_only(session,call.from_user): await call.answer("Accès refusé",show_alert=True); return
+        if not await admin_only(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
     await call.message.edit_text("🛠️ Modération", reply_markup=await mod_kb()); await call.answer()
 
-@router.callback_query(F.data=="mod:toggle_demo")
-async def toggle(call:CallbackQuery):
+@router.callback_query(F.data == "mod:toggle_demo")
+async def toggle(call: CallbackQuery):
     async with SessionLocal() as session:
-        if not await admin_only(session,call.from_user): await call.answer("Accès refusé",show_alert=True); return
-        current=await get_setting(session,"demo_mode","false"); await set_setting(session,"demo_mode","false" if current=="true" else "true")
+        if not await admin_only(session, call.from_user):
+            await call.answer("Accès refusé", show_alert=True); return
+        current = await get_setting(session, "demo_mode", "false")
+        await set_setting(session, "demo_mode", "false" if current == "true" else "true")
     await call.message.edit_text("🎭 Mode démo modifié.", reply_markup=await mod_kb()); await call.answer()
 
-@router.callback_query(F.data=="mod:pending")
-async def pending(call:CallbackQuery):
+@router.callback_query(F.data == "mod:pending")
+async def pending(call: CallbackQuery):
     async with SessionLocal() as session:
-        projects=list((await session.scalars(select(Project).where(Project.status.in_(["pending_review","pending_bot"])))).all())
-    text="🕓 Demandes listing\n\n"; rows=[]
-    if not projects: text+="Aucune demande."
+        projects = list((await session.scalars(select(Project).where(Project.status.in_(["pending_review", "approved_waiting_bot"])))).all())
+    text = "🕓 Demandes listing\n\n"; rows = []
+    if not projects: text += "Aucune demande."
     for p in projects:
-        text += f"#{p.id} — {p.title} — {p.status}\n"; rows.append([(f"📌 {p.title}",f"mod:project:{p.id}")])
-    rows.append([("⬅️ Retour","mod:menu")]); await call.message.edit_text(text, reply_markup=kb(rows)); await call.answer()
+        text += f"#{p.id} — {p.title} — {p.status}\n"
+        rows.append([(f"📌 {p.title}", f"mod:project:{p.id}")])
+    rows.append([("⬅️ Retour", "mod:menu")])
+    await call.message.edit_text(text, reply_markup=kb(rows)); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:project:"))
-async def mod_project(call:CallbackQuery):
-    pid=int(call.data.split(":")[2])
-    async with SessionLocal() as session: p=await session.get(Project,pid)
-    if not p: await call.answer("Introuvable",show_alert=True); return
-    await call.message.edit_text(f"📌 #{p.id} {p.title}\n\n{p.description}\n\nLien : {p.invite_link}\nStatut : {p.status}", reply_markup=kb([[("✅ Approuver",f"mod:approve:{pid}")],[("❌ Refuser avec motif",f"mod:reject:{pid}")],[("⬅️ Retour","mod:pending")]])); await call.answer()
+async def mod_project(call: CallbackQuery):
+    pid = int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        p = await session.get(Project, pid)
+    if not p:
+        await call.answer("Introuvable", show_alert=True); return
+    await call.message.edit_text(
+        f"📌 #{p.id} {p.title}\n\n{p.description}\n\nLien : {p.invite_link}\nStatut : {p.status}",
+        reply_markup=kb([[('✅ Approuver', f'mod:approve:{pid}')], [('❌ Refuser avec motif', f'mod:reject:{pid}')], [('⬅️ Retour', 'mod:pending')]])
+    )
+    await call.answer()
 
 @router.callback_query(F.data.startswith("mod:approve:"))
-async def approve(call:CallbackQuery):
-    pid=int(call.data.split(":")[2])
+async def approve(call: CallbackQuery):
+    pid = int(call.data.split(":")[2])
     async with SessionLocal() as session:
-        p=await session.get(Project,pid)
+        p = await session.get(Project, pid)
         if p:
-            owner=await session.get(User,p.owner_user_id)
+            p.status = "approved_waiting_bot"
+            p.approved_at = datetime.utcnow()
+            owner = await session.get(User, p.owner_user_id)
             await session.commit()
             if owner:
                 try:
-                    add_url=f"https://t.me/{settings.BOT_USERNAME}?startgroup=connect_{p.id}"
-                    await call.bot.send_message(owner.telegram_id, f"✅ Votre groupe a été approuvé.\n\nDernière étape : ajoutez @{settings.BOT_USERNAME} comme administrateur dans votre groupe.\n\nLe bot sert à :\n• analyser les statistiques du groupe ;\n• suivre le nombre de membres ;\n• mesurer la croissance ;\n• vérifier que le lien reste actif ;\n• garder un accès de secours pour vos membres.\n\nCliquez ci-dessous pour ajouter automatiquement le bot au groupe.", reply_markup=kb([[("🤖 Ajouter le bot au groupe", add_url)]]))
-                except Exception: pass
-    await call.message.edit_text("✅ Projet approuvé. En attente d’ajout du bot au groupe.", reply_markup=kb([[("⬅️ Retour","mod:pending")]])); await call.answer()
+                    await call.bot.send_message(
+                        owner.telegram_id,
+                        f"✅ Votre groupe a été approuvé.\n\n"
+                        f"Dernière étape : ajoutez @{settings.BOT_USERNAME} comme administrateur dans votre groupe.\n\n"
+                        "Le bot sert à :\n"
+                        "• communiquer aux personnes qui veulent rejoindre votre groupe ;\n"
+                        "• suivre le nombre exact de membres en temps réel ;\n"
+                        "• mesurer la croissance ;\n"
+                        "• vérifier que le lien reste actif en temps réel ;\n"
+                        "• garder un accès de secours pour vos membres.\n\n"
+                        "Dès que vous ajoutez le bot dans votre groupe, la connexion se fera automatiquement.\n\n"
+                        "⏳ Vous avez 2 heures pour ajouter le bot.\n"
+                        "Passé ce délai, le listing sera automatiquement annulé.\n\n"
+                        "Important : le bot doit être ajouté par le même compte Telegram que celui qui a fait la demande."
+                    )
+                except Exception:
+                    pass
+    await call.message.edit_text("✅ Projet approuvé. En attente d’ajout du bot dans le groupe.", reply_markup=kb([[("⬅️ Retour", "mod:pending")]])); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:reject:"))
-async def reject_start(call:CallbackQuery,state:FSMContext):
-    await state.update_data(project_id=int(call.data.split(":")[2])); await state.set_state(AdminState.reject_project); await call.message.edit_text("Écris le motif du refus :", reply_markup=cancel_kb()); await call.answer()
+async def reject_start(call: CallbackQuery, state: FSMContext):
+    await state.update_data(project_id=int(call.data.split(":")[2])); await state.set_state(AdminState.reject_project)
+    await call.message.edit_text("Écris le motif du refus :", reply_markup=cancel_kb()); await call.answer()
 
 @router.message(AdminState.reject_project)
-async def reject_finish(message:Message,state:FSMContext):
-    data=await state.get_data()
+async def reject_finish(message: Message, state: FSMContext):
+    data = await state.get_data()
     async with SessionLocal() as session:
-        p=await session.get(Project,data["project_id"])
+        p = await session.get(Project, data["project_id"])
         if p:
-            p.status="rejected"; owner=await session.get(User,p.owner_user_id); await session.commit()
+            p.status = "rejected"; owner = await session.get(User, p.owner_user_id); await session.commit()
             if owner:
                 try: await message.bot.send_message(owner.telegram_id, f"❌ Votre demande a été refusée.\n\nMotif :\n{message.text}")
                 except Exception: pass
-    await state.clear(); await message.answer("Refus envoyé.", reply_markup=kb([[("🛠️ Modération","mod:menu")]]))
+    await state.clear(); await message.answer("Refus envoyé.", reply_markup=kb([[("🛠️ Modération", "mod:menu")]]))
 
-@router.callback_query(F.data=="mod:add_cat")
-async def add_cat_start(call:CallbackQuery,state:FSMContext):
+@router.callback_query(F.data == "mod:add_cat")
+async def add_cat_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.add_category); await call.message.edit_text("Nom de la catégorie :", reply_markup=cancel_kb()); await call.answer()
 
 @router.message(AdminState.add_category)
-async def add_cat_finish(message:Message,state:FSMContext):
-    async with SessionLocal() as session: session.add(Category(name=message.text.strip())); await session.commit()
-    await state.clear(); await message.answer("✅ Catégorie ajoutée.", reply_markup=kb([[("🛠️ Modération","mod:menu")]]))
+async def add_cat_finish(message: Message, state: FSMContext):
+    async with SessionLocal() as session:
+        session.add(Category(name=message.text.strip())); await session.commit()
+    await state.clear(); await message.answer("✅ Catégorie ajoutée.", reply_markup=kb([[("🛠️ Modération", "mod:menu")]]))
 
-@router.callback_query(F.data=="mod:delete_cat_menu")
-async def del_cat_menu(call:CallbackQuery):
-    async with SessionLocal() as session: cats=list((await session.scalars(select(Category).order_by(Category.name))).all())
-    rows=[[(f"🗑️ {c.name}",f"mod:delete_cat:{c.id}")] for c in cats]+[[("⬅️ Retour","mod:menu")]]
+@router.callback_query(F.data == "mod:delete_cat_menu")
+async def del_cat_menu(call: CallbackQuery):
+    async with SessionLocal() as session:
+        cats = list((await session.scalars(select(Category).order_by(Category.name))).all())
+    rows = [[(f"🗑️ {c.name}", f"mod:delete_cat:{c.id}")] for c in cats] + [[("⬅️ Retour", "mod:menu")]]
     await call.message.edit_text("⚠️ Supprimer une catégorie supprimera les groupes liés.", reply_markup=kb(rows)); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:delete_cat:"))
-async def del_cat(call:CallbackQuery):
-    cid=int(call.data.split(":")[2])
+async def del_cat(call: CallbackQuery):
+    cid = int(call.data.split(":")[2])
     async with SessionLocal() as session:
-        cat=await session.get(Category,cid)
+        cat = await session.get(Category, cid)
         if cat: await session.delete(cat); await session.commit()
-    await call.message.edit_text("🗑️ Catégorie supprimée.", reply_markup=kb([[("🛠️ Modération","mod:menu")]])); await call.answer()
+    await call.message.edit_text("🗑️ Catégorie supprimée.", reply_markup=kb([[("🛠️ Modération", "mod:menu")]])); await call.answer()
 
-@router.callback_query(F.data=="mod:warning_menu")
-async def warn_menu(call:CallbackQuery):
-    async with SessionLocal() as session: cats=list((await session.scalars(select(Category).order_by(Category.name))).all())
-    rows=[[(f"⚠️ {c.name} [{'ON' if c.warning_enabled else 'OFF'}]",f"mod:warning:{c.id}")] for c in cats]+[[("⬅️ Retour","mod:menu")]]
+@router.callback_query(F.data == "mod:warning_menu")
+async def warn_menu(call: CallbackQuery):
+    async with SessionLocal() as session:
+        cats = list((await session.scalars(select(Category).order_by(Category.name))).all())
+    rows = [[(f"⚠️ {c.name} [{'ON' if c.warning_enabled else 'OFF'}]", f"mod:warning:{c.id}")] for c in cats] + [[("⬅️ Retour", "mod:menu")]]
     await call.message.edit_text("⚠️ Warnings catégories :", reply_markup=kb(rows)); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:warning:"))
-async def warn_config(call:CallbackQuery):
-    cid=int(call.data.split(":")[2])
-    async with SessionLocal() as session: c=await session.get(Category,cid)
-    await call.message.edit_text(f"⚠️ Catégorie : {c.name}\nActivé : {'Oui' if c.warning_enabled else 'Non'}\n\nMessage :\n{c.warning_text or 'Aucun'}", reply_markup=kb([[("✅ Activer",f"mod:warning_enable:{cid}")],[("❌ Désactiver",f"mod:warning_disable:{cid}")],[("✏️ Modifier texte",f"mod:warning_edit:{cid}")],[("⬅️ Retour","mod:warning_menu")]])); await call.answer()
+async def warn_config(call: CallbackQuery):
+    cid = int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        c = await session.get(Category, cid)
+    await call.message.edit_text(f"⚠️ Catégorie : {c.name}\nActivé : {'Oui' if c.warning_enabled else 'Non'}\n\nMessage :\n{c.warning_text or 'Aucun'}", reply_markup=kb([[('✅ Activer', f'mod:warning_enable:{cid}')], [('❌ Désactiver', f'mod:warning_disable:{cid}')], [('✏️ Modifier texte', f'mod:warning_edit:{cid}')], [('⬅️ Retour', 'mod:warning_menu')]])); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:warning_enable:"))
-async def warn_enable(call:CallbackQuery):
+async def warn_enable(call: CallbackQuery):
     cid=int(call.data.split(":")[2])
-    async with SessionLocal() as session: c=await session.get(Category,cid); c.warning_enabled=True; await session.commit()
-    await call.answer("Activé",show_alert=True)
+    async with SessionLocal() as session:
+        c=await session.get(Category,cid); c.warning_enabled=True; await session.commit()
+    await call.answer("Activé", show_alert=True)
 
 @router.callback_query(F.data.startswith("mod:warning_disable:"))
-async def warn_disable(call:CallbackQuery):
+async def warn_disable(call: CallbackQuery):
     cid=int(call.data.split(":")[2])
-    async with SessionLocal() as session: c=await session.get(Category,cid); c.warning_enabled=False; await session.commit()
-    await call.answer("Désactivé",show_alert=True)
+    async with SessionLocal() as session:
+        c=await session.get(Category,cid); c.warning_enabled=False; await session.commit()
+    await call.answer("Désactivé", show_alert=True)
 
 @router.callback_query(F.data.startswith("mod:warning_edit:"))
-async def warn_edit(call:CallbackQuery,state:FSMContext):
-    await state.update_data(category_id=int(call.data.split(":")[2])); await state.set_state(AdminState.edit_warning); await call.message.edit_text("Envoie le texte warning :", reply_markup=cancel_kb()); await call.answer()
+async def warn_edit(call: CallbackQuery, state: FSMContext):
+    await state.update_data(category_id=int(call.data.split(":")[2])); await state.set_state(AdminState.edit_warning)
+    await call.message.edit_text("Envoie le texte warning :", reply_markup=cancel_kb()); await call.answer()
 
 @router.message(AdminState.edit_warning)
-async def warn_save(message:Message,state:FSMContext):
+async def warn_save(message: Message, state: FSMContext):
     data=await state.get_data()
-    async with SessionLocal() as session: c=await session.get(Category,data["category_id"]); c.warning_text=message.text; c.warning_enabled=True; await session.commit()
-    await state.clear(); await message.answer("✅ Warning enregistré.", reply_markup=kb([[("🛠️ Modération","mod:menu")]]))
+    async with SessionLocal() as session:
+        c=await session.get(Category,data["category_id"]); c.warning_text=message.text; c.warning_enabled=True; await session.commit()
+    await state.clear(); await message.answer("✅ Warning enregistré.", reply_markup=kb([[("🛠️ Modération", "mod:menu")]]))
 
-@router.callback_query(F.data=="mod:suggestions")
-async def suggestions(call:CallbackQuery):
-    async with SessionLocal() as session: sug=list((await session.scalars(select(CategorySuggestion).where(CategorySuggestion.status=="pending"))).all())
+@router.callback_query(F.data == "mod:suggestions")
+async def suggestions(call: CallbackQuery):
+    async with SessionLocal() as session:
+        sug=list((await session.scalars(select(CategorySuggestion).where(CategorySuggestion.status=="pending"))).all())
     text="📂 Suggestions catégories\n\n"; rows=[]
-    if not sug: text+="Aucune."
-    for s in sug: text += f"#{s.id} — {s.name}\n"; rows.append([(f"📂 {s.name}",f"mod:sug_accept:{s.id}")])
-    rows.append([("⬅️ Retour","mod:menu")]); await call.message.edit_text(text, reply_markup=kb(rows)); await call.answer()
+    if not sug: text += "Aucune."
+    for s in sug:
+        text += f"#{s.id} — {s.name}\n"; rows.append([(f"📂 {s.name}", f"mod:sug_view:{s.id}")])
+    rows.append([("⬅️ Retour", "mod:menu")]); await call.message.edit_text(text, reply_markup=kb(rows)); await call.answer()
+
+@router.callback_query(F.data.startswith("mod:sug_view:"))
+async def sug_view(call: CallbackQuery):
+    sid=int(call.data.split(":")[2])
+    async with SessionLocal() as session:
+        s=await session.get(CategorySuggestion,sid)
+    if not s: await call.answer("Introuvable", show_alert=True); return
+    await call.message.edit_text(f"💡 Suggestion catégorie\n\nCatégorie : {s.name}", reply_markup=kb([[('✅ Valider', f'mod:sug_accept:{sid}')], [('❌ Refuser', f'mod:sug_reject:{sid}')], [('⬅️ Retour', 'mod:suggestions')]])); await call.answer()
 
 @router.callback_query(F.data.startswith("mod:sug_accept:"))
-async def sug_accept(call:CallbackQuery):
+async def sug_accept(call: CallbackQuery):
     sid=int(call.data.split(":")[2])
     async with SessionLocal() as session:
         s=await session.get(CategorySuggestion,sid)
@@ -167,4 +228,21 @@ async def sug_accept(call:CallbackQuery):
             if user:
                 try: await call.bot.send_message(user.telegram_id, f"✅ Ta catégorie « {s.name} » a été acceptée.")
                 except Exception: pass
-    await call.message.edit_text("✅ Suggestion acceptée.", reply_markup=kb([[("⬅️ Retour","mod:suggestions")]])); await call.answer()
+    await call.message.edit_text("✅ Suggestion acceptée.", reply_markup=kb([[("⬅️ Retour", "mod:suggestions")]])); await call.answer()
+
+@router.callback_query(F.data.startswith("mod:sug_reject:"))
+async def sug_reject_start(call: CallbackQuery, state: FSMContext):
+    await state.update_data(suggestion_id=int(call.data.split(":")[2])); await state.set_state(AdminState.reject_category)
+    await call.message.edit_text("Écris le motif du refus de la catégorie :", reply_markup=cancel_kb()); await call.answer()
+
+@router.message(AdminState.reject_category)
+async def sug_reject_finish(message: Message, state: FSMContext):
+    data=await state.get_data()
+    async with SessionLocal() as session:
+        s=await session.get(CategorySuggestion,data["suggestion_id"])
+        if s:
+            s.status="rejected"; s.refusal_reason=message.text; user=await session.get(User,s.user_id); await session.commit()
+            if user:
+                try: await message.bot.send_message(user.telegram_id, f"❌ Ta catégorie « {s.name} » a été refusée.\n\nMotif :\n{message.text}")
+                except Exception: pass
+    await state.clear(); await message.answer("Refus catégorie envoyé.", reply_markup=kb([[("🛠️ Modération", "mod:menu")]]))

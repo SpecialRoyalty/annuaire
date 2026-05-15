@@ -18,5 +18,5 @@ async def start(call:CallbackQuery,state:FSMContext):
 async def save(message:Message,state:FSMContext):
     async with SessionLocal() as session:
         user=await get_or_create_user(session,message.from_user); s=CategorySuggestion(user_id=user.id,name=message.text.strip()); session.add(s); await session.commit(); await session.refresh(s)
-    await notify_admins(message.bot, f"💡 Nouvelle suggestion catégorie\n\nPar : @{message.from_user.username or message.from_user.id}\nCatégorie : {s.name}", reply_markup=kb([[("✅ Valider",f"mod:sug_accept:{s.id}")],[("🛠️ Modération","mod:menu")]]))
-    await state.clear(); await message.answer("✅ Suggestion envoyée à la modération.", reply_markup=kb([[("🏠 Menu","home")]]))
+    await notify_admins(message.bot, f"💡 Nouvelle suggestion catégorie\n\nPar : @{message.from_user.username or message.from_user.id}\nCatégorie : {s.name}", reply_markup=kb([[('✅ Valider',f'mod:sug_accept:{s.id}')],[('❌ Refuser',f'mod:sug_reject:{s.id}')],[('🛠️ Modération','mod:menu')]]))
+    await state.clear(); await message.answer("✅ Suggestion envoyée à la modération.", reply_markup=kb([[('🏠 Menu','home')]]))
