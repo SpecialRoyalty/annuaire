@@ -39,7 +39,7 @@ class Project(Base):
     moderation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     member_count: Mapped[int] = mapped_column(Integer, default=0)
     member_count_previous: Mapped[int] = mapped_column(Integer, default=0)
-    growth_last_sync: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    growth_last_sync: Mapped[int] = mapped_column(Integer, default=0)
     last_member_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     click_count: Mapped[int] = mapped_column(Integer, default=0)
     start_count: Mapped[int] = mapped_column(Integer, default=0)
