@@ -48,6 +48,7 @@ class Project(Base):
     bot_warning_count: Mapped[int] = mapped_column(Integer, default=0)
     pin_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     listed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 class Rating(Base):
     __tablename__ = "ratings"
