@@ -15,7 +15,7 @@ def parse_ids(value: str) -> set[int]:
 @dataclass
 class Settings:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "touslesliens_bot").replace("@","")
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "touslesgroupes_bot").replace("@","")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     SUPER_ADMIN_IDS: set[int] = None
     SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "support").replace("@","")
