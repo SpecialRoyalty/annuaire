@@ -39,7 +39,7 @@ async def project(call:CallbackQuery):
         user=await get_or_create_user(session,call.from_user); p=await session.get(Project,pid)
         if not p or p.owner_user_id!=user.id: await call.answer("Accès refusé",show_alert=True); return
         avg=p.rating_sum/p.rating_count if p.rating_count else 0
-        text=f"📊 {p.title}\n\nStatut : {p.status}\n🔗 Clics : {p.click_count}\n⭐ Note : {avg:.1f}/5\n👥 Membres : {p.member_count}\n📈 Croissance : {p.growth_last_sync:+}\n⚠️ Warnings : {p.bot_warning_count}/3\n🛡️ Modération : {'activée' if p.moderation_enabled else 'désactivée'}"
+        text=f"📊 {p.title}\n\nStatut : {p.status}\n🔗 Clics : {p.click_count}\n⭐ Note : {avg:.1f}/5\n👥 Membres : {p.member_count}\n📈 Croissance : {(p.growth_last_sync or 0):+}\n⚠️ Warnings : {p.bot_warning_count}/3\n🛡️ Modération : {'activée' if p.moderation_enabled else 'désactivée'}"
     await call.message.edit_text(text, reply_markup=kb([[("🔗 Modifier lien",f"owner:edit_link:{pid}")],[("🛡️ Modération",f"owner:mod:{pid}")],[("🗑️ Supprimer",f"owner:delete:{pid}")],[("🏠 Menu","home")]])); await call.answer()
 
 @router.callback_query(F.data.startswith("owner:edit_link:"))
