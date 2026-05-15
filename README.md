@@ -48,3 +48,21 @@ Important : pas de guillemets autour de `DATABASE_URL`.
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 ```
+
+
+## V6
+
+- Connexion automatique quand le owner ajoute le bot dans son groupe.
+- Plus besoin de bouton startgroup dans le parcours normal.
+- Après approbation, le owner a 2h pour ajouter le bot.
+- Si non ajouté : listing annulé automatiquement.
+- Si bot retiré après activation : 3 warnings puis listing supprimé et owner blacklisté.
+- Refus des suggestions de catégories avec motif.
+- Correction affichage growth_last_sync None.
+
+Reset DB recommandé :
+
+```sql
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+```
